@@ -330,34 +330,23 @@ el('joinBtn').onclick = function(){ grabName(); var c=el('joinIn').value.trim().
 el('leaveBtn').onclick = function(){ Net.stop(); location.reload(); };
 el('startBtn').onclick = function(){ if(S.host) Net.startRace(); };
 el('rematch').onclick = function(){ if(S.mode==='solo'){ resetRound(true);} else if(S.host){ Net.startRace(); } };
-// background song with procedural-synth fallback.
-// Looks for music.mp3 (rename your file to that!) but also tries a few other names,
-// and you can force one with ?song=YourFile.mp3 on the URL.
+// background song with procedural-synth fallback
 var bgAudio=null, usingSong=false;
-var SONG_CANDIDATES=['music.mp3','song.mp3','Game%20Over).mp3','Game%20Over.mp3','game-over.mp3'];
-(function(){
-  try{ var q=new URLSearchParams(location.search).get('song'); if(q) SONG_CANDIDATES.unshift(q); }catch(e){}
-})();
-function wireSong(a){
-  a.loop=true; a.volume=0.6; bgAudio=a;
-  a.addEventListener('playing', function(){ usingSong=true; Music.stopLoop(); });
-  if(S.screen==='hud' && Music.on){ startMusic(); }   // resolved after game already started
-}
-(function probe(i){
-  i=i||0; if(i>=SONG_CANDIDATES.length) return;
-  var a=new Audio(); a.preload='auto';
-  a.addEventListener('canplaythrough', function(){ if(!bgAudio) wireSong(a); }, {once:true});
-  a.addEventListener('error', function(){ if(!bgAudio) probe(i+1); }, {once:true});
-  try{ a.src=SONG_CANDIDATES[i]; a.load(); }catch(e){ probe(i+1); }
-})();
+var songName='music.mp3';
+try{ var q=new URLSearchParams(location.search).get('song'); if(q) songName=q; }catch(e){}
+try{
+  bgAudio=new Audio(songName); bgAudio.loop=true; bgAudio.preload='auto'; bgAudio.volume=0.6;
+  bgAudio.addEventListener('playing', function(){ usingSong=true; Music.stopLoop(); });
+}catch(e){ bgAudio=null; }
 
 function startMusic(){
   if(bgAudio){
     var pr=bgAudio.play();
     if(pr&&pr.then){ pr.then(function(){ usingSong=true; Music.stopLoop(); })
                        .catch(function(){ if(!usingSong) Music.start(); }); }
+    else { usingSong=true; Music.stopLoop(); }
   } else { Music.start(); }
-  setTimeout(function(){ if(!usingSong && !Music.playing) Music.start(); }, 900);
+  setTimeout(function(){ if(!usingSong && !Music.playing) Music.start(); }, 1200);
 }
 
 el('mute').onclick = function(){

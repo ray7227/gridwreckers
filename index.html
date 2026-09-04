@@ -104,6 +104,9 @@
   #touch .tf{left:50%;transform:translateX(-50%);bottom:84px;width:22vw;max-width:104px;height:44px;
     border-radius:14px;font-size:13px;letter-spacing:1px;color:#ffcbb5;background:rgba(255,91,43,.16);
     border-color:rgba(255,91,43,.4)}
+  #touch .tu{left:50%;transform:translateX(-50%);bottom:134px;width:22vw;max-width:104px;height:44px;
+    border-radius:14px;font-size:13px;letter-spacing:1px;color:#ffe08a;background:rgba(255,213,74,.16);
+    border-color:rgba(255,213,74,.45)}
   #touch .tb:active{background:rgba(0,233,255,.2)}
   .touch #touch{display:block}
 
@@ -146,6 +149,7 @@
       <div class="tb tl" id="tLeft">&#8634;</div>
       <div class="tb tr" id="tRight">&#8635;</div>
       <div class="tb tf" id="tFire">FIRE</div>
+      <div class="tb tu" id="tUse">USE</div>
       <div class="tb tj" id="tJump">JUMP</div>
     </div>
     <div id="lab">
@@ -280,7 +284,7 @@ function newPlayer(id, color, name){
     bananaT:0,
     hasShield:false,
     upgrades:{jump:false,airturn:false,doublejump:false,cannon:false},
-    jumpV:0, jumpsUsed:0, cannonCD:0,
+    jumpV:0, jumpsUsed:0, cannonCD:0, items:[],
     lastTurn:-1, wantTurn:0,
     consumedLocal:{},
     mesh:null, trailGroup:null, live:null, committedTo:1,
@@ -343,11 +347,18 @@ function startMusic(){
   if(bgAudio){
     var pr=bgAudio.play();
     if(pr&&pr.then){ pr.then(function(){ usingSong=true; Music.stopLoop(); })
-                       .catch(function(){ if(!usingSong) Music.start(); }); }
+                       .catch(function(){ Music.start(); }); }   // only synth if the file truly fails
     else { usingSong=true; Music.stopLoop(); }
   } else { Music.start(); }
-  setTimeout(function(){ if(!usingSong && !Music.playing) Music.start(); }, 1200);
 }
+// if the browser blocked the first play, grab the next tap/key to start the song
+function tryUnlock(){
+  if(bgAudio && bgAudio.paused && Music.on && S.screen==='hud'){
+    bgAudio.play().then(function(){ usingSong=true; Music.stopLoop(); }).catch(function(){});
+  }
+}
+document.addEventListener('pointerdown', tryUnlock);
+document.addEventListener('keydown', tryUnlock);
 
 el('mute').onclick = function(){
   Music.on=!Music.on; var on=Music.on;
@@ -758,24 +769,18 @@ var Game = {
   renderHoles:function(){
     while(this.holeMeshes.length < S.blastHoles.length){
       var g=new THREE.Group();
-      var cyl=new THREE.Mesh(new THREE.CylinderGeometry(1,1,WALL_H*2.1,16),
-        new THREE.MeshBasicMaterial({color:0x05060e}));            // dark plug = the gap
+      // background-colored plug that simply erases the neon wall = a gap
+      var cyl=new THREE.Mesh(new THREE.CylinderGeometry(1,1,WALL_H*2.4,18),
+        new THREE.MeshBasicMaterial({color:0x04040c, fog:false}));
       cyl.position.y=WALL_H*0.5;
-      var rim=new THREE.Mesh(new THREE.TorusGeometry(1,0.4,8,22),
-        new THREE.MeshBasicMaterial({color:0xff6a1a}));            // glowing blasted rim
-      rim.rotation.x=Math.PI/2; rim.position.y=WALL_H*0.5;
-      var rim2=new THREE.Mesh(new THREE.TorusGeometry(1,0.18,8,22),
-        new THREE.MeshBasicMaterial({color:0xffd24a})); rim2.rotation.x=Math.PI/2; rim2.position.y=WALL_H*0.5;
-      g.add(cyl); g.add(rim); g.add(rim2); g.userData={cyl:cyl,rim:rim,rim2:rim2};
+      g.add(cyl); g.userData={cyl:cyl};
       this.scene.add(g); this.holeMeshes.push(g);
     }
     for(var i=0;i<this.holeMeshes.length;i++){
       var vis=i<S.blastHoles.length, g2=this.holeMeshes[i]; g2.visible=vis;
-      if(vis){ var h=S.blastHoles[i], r=h.r*0.92;
+      if(vis){ var h=S.blastHoles[i], r=h.r*1.02;
         g2.position.set(h.x,0,h.z);
         g2.userData.cyl.scale.set(r,1,r);
-        g2.userData.rim.scale.set(r,r,1);
-        g2.userData.rim2.scale.set(r*1.15,r*1.15,1);
       }
     }
   },
@@ -844,7 +849,7 @@ function resetRound(bump){
     p.x=st.x; p.z=st.z; p.dir=st.dir;
     p.pts=[{x:p.x,z:p.z}]; p.alive=true; p.speed=BASE_SPEED;
     p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0};
-    p.hasShield=false; p.y=0; p.jumpV=0; p.jumpsUsed=0; p.cannonCD=0; p.lastTurn=-1; p.bananaT=0;
+    p.hasShield=false; p.y=0; p.jumpV=0; p.jumpsUsed=0; p.cannonCD=0; p.lastTurn=-1; p.bananaT=0; p.items=[];
     p.consumedLocal={};
     Game.resetTrails(p);
     if(p.mesh){ p.mesh.position.set(p.x,0,p.z); p.mesh.scale.set(1,1,1); p.mesh.visible=true; }
@@ -863,6 +868,7 @@ window.addEventListener('keydown', function(e){
   if(e.key==='ArrowRight'||e.key==='d'||e.key==='D') turn(1);
   if(e.code==='Space'){ e.preventDefault(); doJump(S.players[S.me]); }
   if(e.key==='f'||e.key==='F') fireCannon(S.players[S.me]);
+  if(e.key==='e'||e.key==='E') useItem();
 });
 var isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints>0;
 function bindTap(id,fn){ var b=el(id); ['touchstart','mousedown'].forEach(function(ev){ b.addEventListener(ev,function(e){e.preventDefault(); fn();},{passive:false}); }); }
@@ -870,6 +876,7 @@ bindTap('tLeft', function(){ turn(-1); });
 bindTap('tRight', function(){ turn(1); });
 bindTap('tJump', function(){ doJump(S.players[S.me]); });
 bindTap('tFire', function(){ fireCannon(S.players[S.me]); });
+bindTap('tUse', function(){ useItem(); });
 
 function turn(d){
   if(!S.running||S.over) return;
@@ -1000,15 +1007,29 @@ function killOrShield(p){
   checkRoundEnd();
 }
 
+var HELD_TYPES={rocket:1, ufo:1};   // picked into a slot, fired with USE / E
 function pickup(p,pu){
   if(pu.id){ S.consumed[pu.id]=true; p.consumedLocal[pu.id]=true; }
-  applyEffect(p, pu.type);
   var t=PU_TYPES[pu.type];
+  // human holds activatable items; AI just auto-uses them
+  if(HELD_TYPES[pu.type] && p.id===S.me && !p.isAI){
+    p.items=p.items||[];
+    if(p.items.length<3){ p.items.push(pu.type);
+      toast((t.emo?t.emo+' ':'')+'GOT '+t.label+' \u2014 press USE', t.css, 1100); flash(t.css); }
+    return;
+  }
+  applyEffect(p, pu.type);
   if(p.id===S.me){
     var big = t.L?1500:850;
     toast((t.emo?t.emo+' ':'')+t.label+'!', t.css, big); flash(t.css);
     if(t.L) shake(1.0);
   }
+}
+function useItem(){
+  var p=S.players[S.me]; if(!p||!p.alive||!p.items||!p.items.length) return;
+  var type=p.items.shift(); var t=PU_TYPES[type];
+  applyEffect(p, type);
+  toast((t.emo?t.emo+' ':'')+t.label+'!', t.css, 1000); flash(t.css); shake(1.0);
 }
 
 function applyEffect(p, type){
@@ -1241,6 +1262,10 @@ function drawHUD(){
     if(me.upgrades) PERM_KEYS.forEach(function(k){if(me.upgrades[k]){var u=PU_TYPES[k];puH+='<span class="chip" style="border-color:'+u.css+';color:'+u.css+'">'+u.label+' PERM</span> ';}});
   }
   if(S.global.disco>0) puH+='<span class="chip" style="border-color:'+PU_TYPES.disco.css+';color:'+PU_TYPES.disco.css+'">\uD83E\uDD5B DISCO '+S.global.disco.toFixed(1)+'s</span> ';
+  if(me && me.items && me.items.length){
+    var slots=me.items.map(function(ty){ var u=PU_TYPES[ty]; return '<span class="chip" style="border-color:'+u.css+';color:'+u.css+'">'+(u.sym||'')+' '+u.label+'</span>'; }).join(' ');
+    puH+='<br><span style="opacity:.8;font-size:12px">HELD (E / USE): </span>'+slots;
+  }
   el('pu').innerHTML=puH;
   el('speed').textContent=me?(Math.round((me.fx&&me.fx.nitro>0?BASE_SPEED*1.75:BASE_SPEED))*3)+' kph // CHAOS '+Math.round(chaosLevel()*100)+'%'+(me.upgrades&&me.upgrades.jump?' // SPACE/JUMP':'')+(me.upgrades&&me.upgrades.cannon?' // F/FIRE':'')+(me.alive?'':' // WRECKED'):'';
 }

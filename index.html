@@ -346,31 +346,41 @@ el('joinBtn').onclick = function(){ grabName(); var c=el('joinIn').value.trim().
 el('leaveBtn').onclick = function(){ Net.stop(); location.reload(); };
 el('startBtn').onclick = function(){ if(S.host) Net.startRace(); };
 el('rematch').onclick = function(){ if(S.mode==='solo'){ resetRound(true);} else if(S.host){ Net.startRace(); } };
-// background song with procedural-synth fallback
-var bgAudio=null, usingSong=false;
+// background song with procedural-synth fallback (synth ONLY if the file truly fails)
+var bgAudio=null, usingSong=false, songError=false;
 var songName='music.mp3';
 try{ var q=new URLSearchParams(location.search).get('song'); if(q) songName=q; }catch(e){}
 try{
-  bgAudio=new Audio(songName); bgAudio.loop=true; bgAudio.preload='auto'; bgAudio.volume=0.6;
-  bgAudio.addEventListener('playing', function(){ usingSong=true; Music.stopLoop(); });
+  bgAudio=new Audio(songName); bgAudio.loop=true; bgAudio.preload='auto'; bgAudio.volume=0.7;
+  bgAudio.addEventListener('playing', function(){ usingSong=true; Music.stopLoop(); setMuteLabel(); });
+  bgAudio.addEventListener('error', function(){ songError=true; if(Music.on) Music.start(); setMuteLabel(); });
 }catch(e){ bgAudio=null; }
 
+function setMuteLabel(){
+  var on=Music.on; var src = usingSong?'song':'synth';
+  el('mute').innerHTML=(on?('\u266B '+src):'\u266A muted');
+}
 function startMusic(){
-  if(bgAudio){
-    var pr=bgAudio.play();
-    if(pr&&pr.then){ pr.then(function(){ usingSong=true; Music.stopLoop(); })
-                       .catch(function(){ Music.start(); }); }   // only synth if the file truly fails
-    else { usingSong=true; Music.stopLoop(); }
+  if(bgAudio && !songError){
+    bgAudio.play().then(function(){ usingSong=true; Music.stopLoop(); setMuteLabel(); })
+                  .catch(function(){ /* blocked by autoplay; a tap/keypress retries it, no synth */ });
   } else { Music.start(); }
 }
-// if the browser blocked the first play, grab the next tap/key to start the song
 function tryUnlock(){
-  if(bgAudio && bgAudio.paused && Music.on && S.screen==='hud'){
-    bgAudio.play().then(function(){ usingSong=true; Music.stopLoop(); }).catch(function(){});
+  if(bgAudio && !songError && bgAudio.paused && Music.on){
+    bgAudio.play().then(function(){ usingSong=true; Music.stopLoop(); setMuteLabel(); }).catch(function(){});
   }
 }
 document.addEventListener('pointerdown', tryUnlock);
 document.addEventListener('keydown', tryUnlock);
+
+el('mute').onclick = function(){
+  Music.on=!Music.on; var on=Music.on;
+  if(Music.ctx&&Music.master) Music.master.gain.setTargetAtTime(on?0.4:0, Music.ctx.currentTime, 0.15);
+  if(bgAudio){ bgAudio.muted=!on; if(on && bgAudio.paused && !songError) tryUnlock(); }
+  if(on && !usingSong && songError && !Music.playing) Music.start();
+  setMuteLabel();
+};
 
 el('mute').onclick = function(){
   Music.on=!Music.on; var on=Music.on;

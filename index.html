@@ -246,7 +246,7 @@ var DIFFS = {
   chill:  {name:'Chill',  react:0.55, look:70,  buffer:6,  blunder:0.28, aggr:0,    seekPU:0.20},
   normal: {name:'Normal', react:0.28, look:110, buffer:8,  blunder:0.08, aggr:0.15, seekPU:0.45},
   hard:   {name:'Hard',   react:0.14, look:160, buffer:10, blunder:0.02, aggr:0.45, seekPU:0.65},
-  insane: {name:'Insane', react:0.045, look:260, buffer:10, blunder:0.0,  aggr:2.2,  seekPU:0.55}
+  insane: {name:'Insane', react:0.04, look:260, buffer:8, blunder:0.0, aggr:3.0, seekPU:0.1}
 };
 
 // ---------- state ----------
@@ -1108,7 +1108,7 @@ function aiThink(p, dt){
   if(!emergency && p.aiReact>0) return;
   p.aiReact = D.react*(0.6+Math.random()*0.8);
   if(!emergency && Math.random()<D.blunder) return;
-  if(!emergency && p.aiStraight<0.22) return;
+  if(!emergency && p.aiStraight < Math.max(0.07, 0.22 - D.aggr*0.05)) return;
 
   var li=CW.indexOf(p.dir), left=CW[(li+3)%4], right=CW[(li+1)%4];
   var foe=null; for(var id in S.players){ var o=S.players[id]; if(o.id!==p.id&&o.alive){foe=o;} }

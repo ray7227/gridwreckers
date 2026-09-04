@@ -115,6 +115,17 @@
   #round.show{display:flex}
   #round .big{font-size:clamp(30px,7vw,60px);font-weight:900;transform:skewX(-7deg)}
 
+  /* AC-130 gunship overlay */
+  #ir{position:absolute;inset:0;pointer-events:none;display:none;z-index:5;
+    background:
+      radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0,0,0,.55) 100%),
+      repeating-linear-gradient(0deg, rgba(120,255,160,.05) 0 2px, transparent 2px 4px);
+    mix-blend-mode:screen}
+  body.gun #ir{display:block}
+  #irtxt{position:absolute;top:14px;left:0;right:0;text-align:center;color:#9dffb0;
+    font-weight:900;letter-spacing:3px;font-size:16px;text-shadow:0 0 10px rgba(80,255,120,.6)}
+  #crosshair{position:absolute;left:50%;top:50%;width:2px;height:2px;display:none}
+
   #lab{position:absolute;left:0;right:0;bottom:0;pointer-events:none;padding:8px 8px 10px;display:none}
   #lab.on{display:block}
   #lab .strip{display:flex;gap:7px;overflow-x:auto;padding:8px;pointer-events:auto;
@@ -155,6 +166,7 @@
       <div class="lead">TEST LAB &middot; tap an ability to trigger it on yourself &middot; gold = legendary</div>
       <div class="strip" id="labStrip"></div>
     </div>
+    <div id="ir"><div id="irtxt"></div></div>
   </div>
 
   <div class="screen" id="menu">
@@ -238,7 +250,7 @@ var PU_TYPES = {
   disco:  {css:'#ff5ad0', hex:0xff5ad0, label:'DISCO INFERNO',dur:9.0, L:1, sym:'\uD83E\uDD5B', emo:'\uD83E\uDD5B'},
   bullet: {css:'#ff4a4a', hex:0xff4a4a, label:'BULLET TIME',  dur:5.0, L:1, sym:'\u23F1\uFE0F', emo:'\u23F1'},
   rocket: {css:'#ff7a1a', hex:0xff7a1a, label:'ROCKET RIDE',  dur:1.6, L:1, sym:'\uD83D\uDE80', emo:'\uD83D\uDE80'},
-  ac130:  {css:'#ffe08a', hex:0xffe08a, label:'AC-130 GUNSHIP',dur:7.0, L:1, sym:'\uD83D\uDEE9\uFE0F', emo:'\uD83D\uDEE9\uFE0F'}
+  ac130:  {css:'#ffe08a', hex:0xffe08a, label:'AC-130 GUNSHIP',dur:20.0, L:1, sym:'\uD83D\uDEE9\uFE0F', emo:'\uD83D\uDEE9\uFE0F'}
 };
 var COMMON_KEYS = ['nitro','ghost','shield','wipe','cannon'];
 var PERM_KEYS = ['jump','airturn','doublejump'];
@@ -701,6 +713,13 @@ var Game = {
 
   updateCamera:function(dt){
     var p=S.players[S.me]; if(!p||!p.mesh) return;
+    if(p.fx.ac130>0){                       // AC-130 gunship: high, looking down
+      var ax=(S.aim?S.aim.x:p.x), az=(S.aim?S.aim.z:p.z);
+      this.camera.position.set(p.x, 205, p.z+70);
+      this.camera.lookAt(ax, 0, az);
+      this.fov += (58-this.fov)*Math.min(1,dt*5); this.camera.fov=this.fov; this.camera.updateProjectionMatrix();
+      return;
+    }
     var tgtYaw=Math.atan2(DIRS[p.dir].x, DIRS[p.dir].z);
     var d=tgtYaw-this.camYaw; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI;
     this.camYaw += d*Math.min(1,dt*6);
@@ -930,8 +949,10 @@ function resetRound(bump){
 }
 
 // input
+function inGun(){ var me=S.players[S.me]; return me && me.fx && me.fx.ac130>0; }
 window.addEventListener('keydown', function(e){
   if(e.repeat) return;
+  if(inGun()){ if(e.code==='Space'){ e.preventDefault(); gunFire(); } return; }
   if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A') turn(-1);
   if(e.key==='ArrowRight'||e.key==='d'||e.key==='D') turn(1);
   if(e.code==='Space'){ e.preventDefault(); doJump(S.players[S.me]); }
@@ -944,9 +965,33 @@ bindTap('tRight', function(){ turn(1); });
 bindTap('tJump', function(){ doJump(S.players[S.me]); });
 bindTap('tUse', function(){ useItem(); });
 
+// AC-130 gunship: aim with pointer, hold to fire
+var _ray=new THREE.Raycaster(), _plane=new THREE.Plane(new THREE.Vector3(0,1,0),0), _v3=new THREE.Vector3();
+function aimAt(cx,cy){
+  if(!Game.camera) return;
+  var ndc={x:(cx/innerWidth)*2-1, y:-(cy/innerHeight)*2+1};
+  _ray.setFromCamera(ndc, Game.camera);
+  if(_ray.ray.intersectPlane(_plane,_v3)){ S.aim={x:Math.max(-HALF,Math.min(HALF,_v3.x)), z:Math.max(-HALF,Math.min(HALF,_v3.z))}; }
+}
+function enterGunship(){ var me=S.players[S.me]; S.aim={x:me.x,z:me.z}; document.body.classList.add('gun');
+  el('irtxt').textContent='AC-130  //  AIM + FIRE'; toast('\uD83D\uDEE9\uFE0F AC-130 ONLINE','#ffe08a',1500); }
+function exitGunship(){ document.body.classList.remove('gun'); S.firing=false; }
+function gunFire(){
+  if(!inGun()||!S.aim) return;
+  var now=performance.now()/1000; if(now-(S._lastGun||0) < 0.1) return; S._lastGun=now;
+  var a=S.aim;
+  S.blastHoles.push({x:a.x,z:a.z,r:7,owner:S.me}); if(S.blastHoles.length>40)S.blastHoles.shift();
+  Game.spawnBurst(a.x,a.z,0xffe08a); Game.addTracer(a.x,a.z); Game.addRing(a.x,a.z,0xffd24a,10,0.35);
+  Music.sfx('cannon'); shake(0.2);
+}
+window.addEventListener('pointermove', function(e){ if(inGun()) aimAt(e.clientX,e.clientY); });
+window.addEventListener('pointerdown', function(e){ if(inGun()){ aimAt(e.clientX,e.clientY); S.firing=true; gunFire(); } });
+window.addEventListener('pointerup', function(){ S.firing=false; });
+
 function turn(d){
   if(!S.running||S.over) return;
   var p=S.players[S.me]; if(!p||!p.alive) return;
+  if(inGun()) return;
   if(p.fx.stun>0) return;
   if(p.y>0.35 && !(p.upgrades&&p.upgrades.airturn) && !(p.fx.eagle>0) && !(p.fx.rocket>0)) return;
   if(p.fx.spin>0) d=-d;
@@ -1030,6 +1075,7 @@ function stepPlayer(p, dt){
   if(p.fx.spin>0)  spd*=0.7;
   for(var bid in S.players){ if(bid!=p.id && S.players[bid].fx.bullet>0){ spd*=0.35; } }
   if(p.fx.stun>0) spd=0;
+  if(p.fx.ac130>0) spd=0;                 // gunship hovers
   p.speed=spd; if(p.cannonCD>0)p.cannonCD=Math.max(0,p.cannonCD-dt);
 
   if(p.fx.rocket>0){ p.y=Math.sin((1-p.fx.rocket/PU_TYPES.rocket.dur)*Math.PI)*46; }
@@ -1038,8 +1084,8 @@ function stepPlayer(p, dt){
   else if(p.y>0||p.jumpV>0){ p.jumpV-=(S.global.moon>0?24:42)*dt; p.y+=p.jumpV*dt; if(p.y<=0){p.y=0;p.jumpV=0;p.jumpsUsed=0;} }
   if(S.global.moon>0&&p.y<0.2&&p.jumpV===0) p.y+=Math.abs(Math.sin(performance.now()/500+p.id))*2.2;
 
-  // AC-130: circle the sky raining wall-busting rounds (never hits players)
-  if(p.fx.ac130>0){
+  // AC-130: AI rains rounds automatically; the human aims + fires in gunship POV
+  if(p.fx.ac130>0 && p.id!==S.me){
     p.ac130T=(p.ac130T||0)-dt;
     if(p.ac130T<=0){ p.ac130T=0.18;
       var dd=DIRS[p.dir], ahead=20+Math.random()*70, lat=(Math.random()*2-1)*34;
@@ -1047,7 +1093,6 @@ function stepPlayer(p, dt){
       var tz=Math.max(-HALF+3,Math.min(HALF-3, p.z+dd.z*ahead + dd.x*lat));
       S.blastHoles.push({x:tx,z:tz,r:7.5,owner:p.id}); if(S.blastHoles.length>40)S.blastHoles.shift();
       Game.spawnBurst(tx,tz,0xffe08a); Game.addTracer(tx,tz); Game.addRing(tx,tz,0xffd24a,10,0.35);
-      if(p.id===S.me) shake(0.25); if(Math.random()<0.5) Music.sfx('cannon');
     }
   }
 
@@ -1128,7 +1173,7 @@ function applyEffect(p, type){
     case 'airturn': p.upgrades.airturn=true; break;
     case 'doublejump': p.upgrades.jump=true; p.upgrades.doublejump=true; break;
     case 'cannon': fireBigCannon(p); break;
-    case 'ac130': p.fx.ac130=t.dur; p.ac130T=0; if(p.id===S.me) shake(1.0); break;
+    case 'ac130': p.fx.ac130=t.dur; p.ac130T=0; if(p.id===S.me){ enterGunship(); } break;
     case 'shield': p.hasShield=true; p.fx.shield=t.dur; break;
     case 'wipe':   p.pts=[{x:p.x,z:p.z}]; Game.resetTrails(p); p.committedTo=1; break;
     case 'disco':  S.global.disco=t.dur; break;
@@ -1291,6 +1336,24 @@ function loop(t){
 
   stepCannons(dt);
   if(S.mode==='online') connLive();
+  // AC-130 gunship: hold-fire, reticle, countdown, exit
+  var meG=S.players[S.me];
+  if(meG && meG.fx.ac130>0){
+    if(S.firing) gunFire();
+    if(!Game.reticle && Game.scene){
+      var rg=new THREE.Group();
+      var rr=new THREE.Mesh(new THREE.TorusGeometry(5,0.4,8,28), new THREE.MeshBasicMaterial({color:0x9dffb0, fog:false}));
+      rr.rotation.x=Math.PI/2; rg.add(rr);
+      var rr2=new THREE.Mesh(new THREE.TorusGeometry(2.2,0.3,8,20), new THREE.MeshBasicMaterial({color:0xffffff, fog:false}));
+      rr2.rotation.x=Math.PI/2; rg.add(rr2);
+      Game.scene.add(rg); Game.reticle=rg;
+    }
+    if(Game.reticle && S.aim){ Game.reticle.visible=true; Game.reticle.position.set(S.aim.x,0.4,S.aim.z); Game.reticle.rotation.y=now*2; }
+    el('irtxt').textContent='AC-130  //  AIM + FIRE  //  '+Math.ceil(meG.fx.ac130)+'s';
+    meG._wasGun=true;
+  } else if(meG && meG._wasGun){
+    meG._wasGun=false; exitGunship(); if(Game.reticle) Game.reticle.visible=false;
+  }
   if(S.global.moon>0)  S.global.moon=Math.max(0,S.global.moon-dt);
   if(S.global.disco>0) S.global.disco=Math.max(0,S.global.disco-dt);
   for(var qi=S.peels.length-1;qi>=0;qi--){ S.peels[qi].t-=dt; if(S.peels[qi].t<=0) S.peels.splice(qi,1); }

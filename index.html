@@ -385,7 +385,7 @@ function grabName(){ var v=el('nameIn').value.trim(); S.name = v || ('Rider'+Mat
 el('soloBtn').onclick = function(){ grabName(); startMusic(); startSolo(); };
 el('testBtn').onclick = function(){ grabName(); startMusic(); startTest(); };
 el('createBtn').onclick = function(){ grabName(); startMusic(); createRoom(); };
-el('joinBtn').onclick = function(){ grabName(); var c=el('joinIn').value.trim().toUpperCase(); if(c.length<3){ el('menuErr').textContent='Enter a room code.'; return;} joinRoom(c); };
+el('joinBtn').onclick = function(){ grabName(); startMusic(); var c=el('joinIn').value.trim().toUpperCase(); if(c.length<3){ el('menuErr').textContent='Enter a room code.'; return;} joinRoom(c); };
 el('leaveBtn').onclick = function(){ Net.stop(); location.reload(); };
 el('startBtn').onclick = function(){ if(S.host) Net.startRace(); };
 el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3||(S.scores[2]||0)>=3) S.scores={1:0,2:0}; resetRound(true);} else if(S.host){ Net.startRace(); } };
@@ -393,7 +393,7 @@ el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3|
 var bgAudio=null, musicOn=true;
 var songName='music.mp3';
 try{ var q=new URLSearchParams(location.search).get('song'); if(q) songName=q; }catch(e){}
-function ensureBg(){ if(bgAudio) return; try{ bgAudio=new Audio(songName+'?cb='+Date.now()); bgAudio.loop=true; bgAudio.preload='auto'; bgAudio.volume=0.7; }catch(e){ bgAudio=null; } }
+function ensureBg(){ if(bgAudio) return; try{ bgAudio=new Audio(songName); bgAudio.loop=true; bgAudio.preload='auto'; bgAudio.volume=0.7; }catch(e){ bgAudio=null; } }
 function setMuteLabel(){ el('mute').innerHTML = musicOn ? '\u266B music' : '\u266A muted'; }
 function startMusic(){ ensureBg(); if(bgAudio && musicOn){ bgAudio.play().catch(function(){}); } }
 function tryUnlock(){ startMusic(); }

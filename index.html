@@ -147,6 +147,7 @@
   #lab .tt{white-space:nowrap;border:1px solid rgba(120,150,255,.35);border-radius:10px;
     padding:9px 12px;font-size:12.5px;font-weight:800;color:#eaf6ff;background:rgba(10,14,30,.7);cursor:pointer}
   #lab .tt.leg{border-color:#ffd54a;color:#ffe9a0;box-shadow:0 0 12px rgba(255,213,74,.25)}
+  #lab .tt.lbl{background:none;border:none;color:#7dffb0;opacity:.8;font-size:11px;align-self:center;padding:0 2px 0 8px;cursor:default}
   #lab .tt:active{transform:translateY(1px)}
   #lab .lead{font-size:11px;opacity:.7;padding:2px 10px 0}
 </style>
@@ -270,7 +271,10 @@ var PU_TYPES = {
   disco:  {css:'#ff5ad0', hex:0xff5ad0, label:'DISCO INFERNO',dur:9.0, L:1, sym:'\uD83E\uDD5B', emo:'\uD83E\uDD5B'},
   bullet: {css:'#ff4a4a', hex:0xff4a4a, label:'BULLET TIME',  dur:5.0, L:1, sym:'\u23F1\uFE0F', emo:'\u23F1'},
   rocket: {css:'#ff7a1a', hex:0xff7a1a, label:'ROCKET RIDE',  dur:1.6, L:1, sym:'\uD83D\uDE80', emo:'\uD83D\uDE80'},
-  ac130:  {css:'#ffe08a', hex:0xffe08a, label:'AC-130 GUNSHIP',dur:20.0, L:1, sym:'\uD83D\uDEE9\uFE0F', emo:'\uD83D\uDEE9\uFE0F'}
+  ac130:  {css:'#ffe08a', hex:0xffe08a, label:'AC-130 GUNSHIP',dur:20.0, L:1, sym:'\uD83D\uDEE9\uFE0F', emo:'\uD83D\uDEE9\uFE0F'},
+  meteor:    {css:'#ff7a3a', hex:0xff7a3a, label:'METEOR STRIKE', dur:15, L:1, sym:'\u2604\uFE0F'},
+  blackhole: {css:'#9b5bff', hex:0x9b5bff, label:'BLACK HOLE',    dur:15, L:1, sym:'\uD83C\uDF00'},
+  boulder:   {css:'#b08a5a', hex:0xb08a5a, label:'BOULDER',       dur:15, L:1, sym:'\uD83E\uDEA8'}
 };
 var COMMON_KEYS = ['nitro','ghost','shield','wipe','cannon'];
 var PERM_KEYS = ['jump','airturn','doublejump'];
@@ -384,7 +388,7 @@ el('createBtn').onclick = function(){ grabName(); startMusic(); createRoom(); };
 el('joinBtn').onclick = function(){ grabName(); var c=el('joinIn').value.trim().toUpperCase(); if(c.length<3){ el('menuErr').textContent='Enter a room code.'; return;} joinRoom(c); };
 el('leaveBtn').onclick = function(){ Net.stop(); location.reload(); };
 el('startBtn').onclick = function(){ if(S.host) Net.startRace(); };
-el('rematch').onclick = function(){ if(S.mode==='solo'){ resetRound(true);} else if(S.host){ Net.startRace(); } };
+el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3||(S.scores[2]||0)>=3) S.scores={1:0,2:0}; resetRound(true);} else if(S.host){ Net.startRace(); } };
 // background music = YOUR music.mp3 (created fresh like the SFX; pauses for eagle/AC-130 audio)
 var bgAudio=null, musicOn=true;
 var songName='music.mp3';
@@ -571,9 +575,10 @@ function startTest(){
 
 function buildLab(){
   var strip=el('labStrip'); strip.innerHTML='';
+  function label(txt){ var l=document.createElement('div'); l.className='tt lbl'; l.textContent=txt; strip.appendChild(l); }
   function chip(type){
-    var t=PU_TYPES[type]; var b=document.createElement('div');
-    b.className='tt'+(t.L?' leg':''); b.textContent=(t.emo?t.emo+' ':'')+t.label;
+    var t=PU_TYPES[type]; if(!t) return; var b=document.createElement('div');
+    b.className='tt'+(t.L?' leg':''); b.textContent=(t.emo?t.emo+' ':(t.sym?t.sym+' ':''))+t.label;
     b.onclick=function(){ var me=S.players[S.me];
       if(!me.alive){ resetRound(false); }
       applyEffect(me,type);
@@ -581,10 +586,10 @@ function buildLab(){
     };
     strip.appendChild(b);
   }
-  COMMON_KEYS.forEach(function(k){ chip(k); });
-  PERM_KEYS.forEach(function(k){ chip(k); });
-  LEGEND_KEYS.forEach(function(k){ chip(k); });
-  var reset=document.createElement('div'); reset.className='tt'; reset.textContent='\u21BB RESET ROUND';
+  label('EARLY 0-1min:'); ['cannon','jump','wipe','shield','ghost','nitro','disco'].forEach(chip);
+  label('LATE 1min+:'); ['ufo','bullet','rocket','tiny','airturn','doublejump'].forEach(chip);
+  label('RARE 45s+ (20%):'); ['eagle','kaiju','ac130','meteor','blackhole','boulder'].forEach(chip);
+  var reset=document.createElement('div'); reset.className='tt'; reset.textContent='\u21BB RESET';
   reset.onclick=function(){ resetRound(false); }; strip.appendChild(reset);
 }
 
@@ -960,6 +965,22 @@ var Game = {
       else if(f.kind==='ball'){ var s=1+k*(f.maxR/3); f.m.scale.set(s,s,s); f.m.material.opacity=0.95*(1-k*k); }
     }
   },
+  renderHazards:function(){
+    if(!this.scene) return;
+    if(!this.bhMesh){
+      var bg=new THREE.Group();
+      var core=new THREE.Mesh(new THREE.SphereGeometry(3.4,18,14), new THREE.MeshBasicMaterial({color:0x0a0016}));
+      var acc=new THREE.Mesh(new THREE.TorusGeometry(6,1.1,10,30), new THREE.MeshBasicMaterial({color:0x9b5bff, transparent:true, opacity:0.8}));
+      acc.rotation.x=Math.PI/2.2; bg.add(core); bg.add(acc); bg.userData={acc:acc};
+      bg.visible=false; this.scene.add(bg); this.bhMesh=bg;
+      var bm=new THREE.Mesh(new THREE.IcosahedronGeometry(4.5,0), new THREE.MeshStandardMaterial({color:0x6b5535, emissive:0x2a2015, emissiveIntensity:.3, flatShading:true, roughness:1}));
+      bm.visible=false; this.scene.add(bm); this.boulderMesh=bm;
+    }
+    this.bhMesh.visible=!!S.bh;
+    if(S.bh){ this.bhMesh.position.set(S.bh.x, groundHeight(S.bh.x,S.bh.z)+4, S.bh.z); this.bhMesh.rotation.y+=0.12; this.bhMesh.userData.acc.rotation.z+=0.2; }
+    this.boulderMesh.visible=!!S.boulder;
+    if(S.boulder){ this.boulderMesh.position.set(S.boulder.x, groundHeight(S.boulder.x,S.boulder.z)+4.2, S.boulder.z); this.boulderMesh.rotation.x+=0.16; this.boulderMesh.rotation.z+=0.11; }
+  },
   render:function(){ this.renderer.render(this.scene,this.camera); },
   obSeg:function(a,b){
     var dx=b.x-a.x, dz=b.z-a.z, len=Math.hypot(dx,dz); if(len<0.05) return null;
@@ -1004,6 +1025,7 @@ function beginGame(){
 // start the first game, or just reset for a rematch if the game is already live
 function newRound(){
   if(!S.running){ beginGame(); return; }
+  if((S.scores[1]||0)>=3 || (S.scores[2]||0)>=3){ S.scores={1:0,2:0}; }  // new match
   S.over=false;
   resetRound(false);
 }
@@ -1014,10 +1036,10 @@ function seedPowerups(){
 }
 function chaosLevel(){ return Math.min(1,S.roundTime/95); }
 
-var REG_EARLY=['cannon','jump','wipe','shield','ghost','nitro'];
-var REG_LATE =['cannon','jump','wipe','shield','ghost','nitro','ufo','bullet','rocket','tiny'];
-var LEGEND3  =['eagle','kaiju','ac130'];
-var LEGEND3_SET={eagle:1,kaiju:1,ac130:1};
+var REG_EARLY=['cannon','jump','wipe','shield','ghost','nitro','disco'];
+var REG_LATE =['cannon','jump','wipe','shield','ghost','nitro','disco','ufo','bullet','rocket','tiny','airturn','doublejump'];
+var LEGEND3  =['eagle','kaiju','ac130','meteor','blackhole','boulder'];
+var LEGEND3_SET={eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1};
 
 function spawnPU(forced){
   var t=forced || REG_EARLY[Math.floor(rng()*REG_EARLY.length)];
@@ -1053,12 +1075,14 @@ function resetRound(bump){
     p.pts=[{x:p.x,z:p.z}]; p.alive=true; p.speed=BASE_SPEED;
     p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0};
     p.hasShield=false; p.y=0; p.jumpV=0; p.jumpsUsed=0; p.cannonCD=0; p.lastTurn=-1; p.bananaT=0; p.items=[]; p.sizeMode='normal';
+    p.upgrades={jump:false,airturn:false,doublejump:false,cannon:false};   // abilities don't carry between rounds
     p.consumedLocal={};
     Game.resetTrails(p);
     if(p.mesh){ p.mesh.position.set(p.x,0,p.z); p.mesh.scale.set(1,1,1); p.mesh.visible=true; }
     if(p.eagle) p.eagle.visible=false;
   }
   S.global={moon:0,disco:0}; S.peels=[]; S.roundTime=0; S.blastHoles=[]; S.cannonShots=[];
+  S.meteor=0; S.bh=null; S.boulder=null;
   Game.camYaw=0;
   if(S.mode==='solo'){ seedPowerups(); }
   toast('ROUND '+S.round+'  //  GO', COLORS[S.colorIdx].css, 1100);
@@ -1095,7 +1119,7 @@ function enterGunship(){ var me=S.players[S.me]; S.aim={x:me.x,z:me.z}; S._lastG
 function exitGunship(){ document.body.classList.remove('gun'); stick.dx=0; stick.dz=0; stick.active=false; }
 function gunFireBig(){
   if(!inGun()||!S.aim) return;
-  var now=performance.now()/1000; if(now-(S._lastGun||-999) < 2) return; S._lastGun=now;
+  var now=performance.now()/1000; if(now-(S._lastGun||-999) < 1) return; S._lastGun=now;
   bigExplode(S.aim.x, S.aim.z, S.me);
 }
 // aim joystick
@@ -1162,7 +1186,14 @@ function carveTrail(p, h){
   }
   p.pts=out; p._builtPts=-1;
 }
-function carveAll(x,z,r){ var h={x:x,z:z,r:r}; for(var id in S.players){ carveTrail(S.players[id], h); } }
+function carveAll(x,z,r){
+  var h={x:x,z:z,r:r};
+  for(var id in S.players){ var pl=S.players[id];
+    var last=pl.pts[pl.pts.length-1];
+    if(last && Math.hypot(pl.x-last.x,pl.z-last.z)>0.6){ pl.pts.push({x:pl.x,z:pl.z,mode:pl.sizeMode}); }  // seal live wall
+    carveTrail(pl, h);
+  }
+}
 function blastWall(x,z,owner){ carveAll(x,z,7.5); addHole(x,z,7.5,3); Game.spawnBurst(x,z,0xff5b2b); shake(.6); }
 function bigExplode(x,z,owner){
   carveAll(x,z,17); addHole(x,z,17,7);
@@ -1187,9 +1218,9 @@ function distSeg(px,pz,ax,az,bx,bz){
   var cx=ax+t*dx, cz=az+t*dz; return Math.hypot(px-cx,pz-cz);
 }
 function sizeFor(mode){
-  if(mode==='tiny')  return {w:0.28, h:WALL_H*0.34};
-  if(mode==='kaiju') return {w:3.6,  h:WALL_H*2.2};
-  return {w:1.1, h:WALL_H};
+  if(mode==='tiny')  return {w:0.14, h:WALL_H*0.34};
+  if(mode==='kaiju') return {w:1.8,  h:WALL_H*2.2};
+  return {w:0.55, h:WALL_H};
 }
 // multi-level terrain height at (x,z). Classic = flat. Gauntlet = 3 chunks along z:
 // main flat (near spawn) -> 45deg-ish ramp -> lower platform.
@@ -1263,6 +1294,41 @@ function trailHitSelf(p){
   return false;
 }
 
+function isImmune(p){ return p.fx.ghost>0||p.y>1.2||p.fx.eagle>0||p.fx.kaiju>0||p.fx.rocket>0||p.fx.ac130>0; }
+function bendTrails(cx,cz,range){
+  for(var id in S.players){ var p=S.players[id], ch=false;
+    for(var i=1;i<p.pts.length;i++){ var pt=p.pts[i]; if(pt.brk) continue;
+      var dx=cx-pt.x, dz=cz-pt.z, d=Math.hypot(dx,dz);
+      if(d<range && d>2){ var f=(1-d/range)*5; pt.x+=dx/d*f; pt.z+=dz/d*f; ch=true; } }
+    if(ch) p._builtPts=-1; }
+}
+function stepHazards(dt){
+  // METEOR STRIKE
+  if(S.meteor>0){ S.meteor-=dt; S.meteorT-=dt;
+    if(S.meteorT<=0){ S.meteorT=0.35;
+      var mx=Math.round((rng()*2-1)*(HALF-6)), mz=Math.round((rng()*2-1)*(HALF-6));
+      carveAll(mx,mz,9); addHole(mx,mz,9,4); Game.spawnBurst(mx,mz,0xff7a3a); Game.addTracer(mx,mz); Game.addRing(mx,mz,0xff7a3a,16,0.5); shake(0.4); sfxFile(AC_EXPLODE);
+      for(var id in S.players){ var pl=S.players[id]; if(pl.alive && !isImmune(pl) && Math.hypot(pl.x-mx,pl.z-mz)<7) killOrShield(pl); }
+    }
+  }
+  // BLACK HOLE
+  if(S.bh){ S.bh.life-=dt; if(S.bh.life<=0){ S.bh=null; }
+    else { var range=64, pull=52;
+      for(var id2 in S.players){ var b=S.players[id2]; if(!b.alive) continue; var dx=S.bh.x-b.x, dz=S.bh.z-b.z, d=Math.hypot(dx,dz)||1;
+        if(d<range){ var ff=(1-d/range)*pull*dt; b.x+=dx/d*ff; b.z+=dz/d*ff; } }
+      S.bh.bt=(S.bh.bt||0)-dt; if(S.bh.bt<=0){ S.bh.bt=0.15; bendTrails(S.bh.x,S.bh.z,range); }
+    }
+  }
+  // BOULDER
+  if(S.boulder){ var B=S.boulder; B.life-=dt; if(B.life<=0){ S.boulder=null; }
+    else { var sp=64; B.x+=B.dx*sp*dt; B.z+=B.dz*sp*dt;
+      if(Math.abs(B.x)>HALF-5){ B.dx*=-1; B.x=Math.max(-HALF+5,Math.min(HALF-5,B.x)); }
+      if(Math.abs(B.z)>HALF-5){ B.dz*=-1; B.z=Math.max(-HALF+5,Math.min(HALF-5,B.z)); }
+      B.carveT-=dt; if(B.carveT<=0){ B.carveT=0.2; carveAll(B.x,B.z,5); addHole(B.x,B.z,5,2); }
+      for(var id3 in S.players){ var pb=S.players[id3]; if(pb.alive && !isImmune(pb) && Math.hypot(pb.x-B.x,pb.z-B.z)<6.5) killOrShield(pb); }
+    }
+  }
+}
 function stepPlayer(p, dt){
   if(!p.alive) return;
   ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun']
@@ -1347,7 +1413,7 @@ function killOrShield(p){
   checkRoundEnd();
 }
 
-var HELD_TYPES={nitro:1,ghost:1,shield:1,wipe:1,cannon:1,tiny:1,ufo:1,bullet:1,rocket:1,eagle:1,kaiju:1,ac130:1};   // stored; jump is the only instant/permanent one
+var HELD_TYPES={nitro:1,ghost:1,shield:1,wipe:1,cannon:1,tiny:1,ufo:1,bullet:1,rocket:1,eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1};   // stored; jump is the only instant/permanent one
 function pickup(p,pu){
   if(pu.id){ S.consumed[pu.id]=true; p.consumedLocal[pu.id]=true; }
   var t=PU_TYPES[pu.type];
@@ -1379,7 +1445,7 @@ function applyEffect(p, type){
     case 'jump': p.upgrades.jump=true; break;
     case 'airturn': p.upgrades.airturn=true; break;
     case 'doublejump': p.upgrades.jump=true; p.upgrades.doublejump=true; break;
-    case 'cannon': fireBigCannon(p); break;
+    case 'cannon': fireBigCannon(p); setTimeout(function(){fireBigCannon(p);},140); setTimeout(function(){fireBigCannon(p);},280); break;
     case 'ac130': p.fx.ac130=t.dur; p.ac130T=0; sfxFile(AC_START); if(p.id===S.me){ enterGunship(); } break;
     case 'shield': p.hasShield=true; p.fx.shield=t.dur; break;
     case 'wipe':   p.pts=[{x:p.x,z:p.z}]; Game.resetTrails(p); p.committedTo=1; break;
@@ -1387,11 +1453,17 @@ function applyEffect(p, type){
     case 'eagle':  p.fx.eagle=t.dur; eagleFX(p.x,p.z); break;
     case 'kaiju':  p.fx.kaiju=t.dur; kaijuFX(p.x,p.z); break;
     case 'rocket': p.fx.rocket=t.dur; setTimeout(function(){ rocketSlam(p); }, (t.dur*1000)-30); break;
+    case 'meteor': S.meteor=15; S.meteorT=0; if(p.id===S.me) toast('\u2604\uFE0F METEOR STRIKE','#ff7a3a',1400); break;
+    case 'blackhole': S.bh={x:Math.round((rng()*2-1)*(HALF-34)),z:Math.round((rng()*2-1)*(HALF-34)),life:15}; if(p.id===S.me) toast('\uD83C\uDF00 BLACK HOLE','#9b5bff',1400); break;
+    case 'boulder': { var ang=rng()*6.28; S.boulder={x:Math.round((rng()*2-1)*40),z:Math.round((rng()*2-1)*40),dx:Math.cos(ang),dz:Math.sin(ang),life:15,carveT:0}; if(p.id===S.me) toast('\uD83E\uDEA8 BOULDER','#b08a5a',1400); break; }
     case 'ufo': {
       var foe=null,bd=1e9;
       for(var id in S.players){ var o=S.players[id]; if(o.id===p.id||!o.alive)continue;
         var dd=Math.hypot(o.x-p.x,o.z-p.z); if(dd<bd){bd=dd;foe=o;} }
-      if(foe){ foe.x=Math.round((rng()*2-1)*(HALF-30)); foe.z=Math.round((rng()*2-1)*(HALF-30));
+      if(foe){
+        var fl=foe.pts[foe.pts.length-1];
+        if(fl && Math.hypot(foe.x-fl.x,foe.z-fl.z)>0.6) foe.pts.push({x:foe.x,z:foe.z,mode:foe.sizeMode}); // keep recent wall
+        foe.x=Math.round((rng()*2-1)*(HALF-30)); foe.z=Math.round((rng()*2-1)*(HALF-30));
         foe.pts.push({x:foe.x,z:foe.z,brk:true}); foe._builtPts=-1; foe.fx.stun=0.8;
         Game.spawnBurst(foe.x,foe.z,0xb06bff);
         if(foe.id===S.me) toast('\uD83D\uDEF8 ABDUCTED!','#b06bff',1200);
@@ -1424,12 +1496,18 @@ function checkRoundEnd(){
 
 function showRoundOver(winner){
   var meWon = winner && winner.id===S.me;
+  var matchWinner = winner && (S.scores[winner.id]||0) >= 3;
   el('round').classList.add('show');
-  el('roundText').textContent = winner ? (meWon?'YOU WRECKED THEM':(winner.name+' WINS')) : 'DRAW';
+  if(matchWinner){
+    el('roundText').textContent = meWon ? 'YOU WIN THE MATCH!' : (winner.name+' WINS THE MATCH');
+  } else {
+    el('roundText').textContent = winner ? (meWon?'YOU WRECKED THEM':(winner.name+' WINS')) : 'DRAW';
+  }
   el('roundText').style.color = winner? (COLORS.find(function(c){return c.hex===winner.color;})||{css:'#fff'}).css : '#fff';
-  el('roundSub').textContent = 'Score  '+(S.scores[1]||0)+' : '+(S.scores[2]||0)+
+  el('roundSub').textContent = 'Match  '+(S.scores[1]||0)+' : '+(S.scores[2]||0)+' (first to 3)'+
     (S.mode==='solo'?'  \u2014  press Play again':(S.host?'  \u2014  host: Play again':'  \u2014  waiting for host...'));
   el('rematch').style.display = (S.mode==='solo'||S.host)?'inline-block':'none';
+  el('rematch').textContent = matchWinner ? 'New match' : 'Play again';
 }
 
 // ---- AI ----
@@ -1542,6 +1620,7 @@ function loop(t){
   }
 
   stepCannons(dt);
+  if(!S.over) stepHazards(dt);
   updateMusic();
   if(S.mode==='online') connLive();
   var anyEagle=false; for(var eg in S.players){ if(S.players[eg].alive && S.players[eg].fx.eagle>0){ anyEagle=true; break; } }
@@ -1559,7 +1638,7 @@ function loop(t){
       Game.scene.add(rg); Game.reticle=rg;
     }
     if(Game.reticle && S.aim){ Game.reticle.visible=true; Game.reticle.position.set(S.aim.x,0.4,S.aim.z); Game.reticle.rotation.y=now*2; }
-    var cd=Math.max(0, 2-(performance.now()/1000-(S._lastGun||-999)));
+    var cd=Math.max(0, 1-(performance.now()/1000-(S._lastGun||-999)));
     var fb=el('gunFire'); if(fb) fb.textContent = cd>0 ? Math.ceil(cd)+'s' : 'FIRE';
     el('irtxt').textContent='AC-130  //  STEER + FIRE  //  '+Math.ceil(meG.fx.ac130)+'s';
     meG._wasGun=true;
@@ -1600,6 +1679,7 @@ function loop(t){
   }
   Game.renderPeels();
   Game.renderHoles();
+  Game.renderHazards();
   Game.buildObstacles();
   Game.stepGlobals(now,dt);
   Game.syncPU();

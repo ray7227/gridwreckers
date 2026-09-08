@@ -107,6 +107,9 @@
   #touch .tu{left:50%;transform:translateX(-50%);bottom:134px;width:22vw;max-width:104px;height:44px;
     border-radius:14px;font-size:13px;letter-spacing:1px;color:#ffe08a;background:rgba(255,213,74,.16);
     border-color:rgba(255,213,74,.45)}
+  #touch .tact{right:14px;bottom:150px;width:24vw;height:24vw;max-width:120px;max-height:120px;border-radius:20px;
+    font-size:18px;font-weight:900;color:#ffd0b0;background:rgba(255,90,40,.2);border-color:rgba(255,120,60,.7);display:none}
+  #touch .tact.on{display:flex}
   #touch .tb:active{background:rgba(0,233,255,.2)}
   .touch #touch{display:block}
   #touch .tapzone{position:absolute;left:20vw;right:20vw;top:0;bottom:0;pointer-events:auto;background:transparent}
@@ -176,6 +179,7 @@
       <div class="tb tl" id="tLeft">&#8634;</div>
       <div class="tb tr" id="tRight">&#8635;</div>
       <div class="tb tu" id="tUse">USE</div>
+      <div class="tb tact" id="tAct">FIRE</div>
     </div>
     <div id="gunUI">
       <div id="gunStick"><div id="gunKnob"></div></div>
@@ -276,12 +280,13 @@ var PU_TYPES = {
   blackhole: {css:'#9b5bff', hex:0x9b5bff, label:'BLACK HOLE',    dur:15, L:1, sym:'\uD83C\uDF00'},
   boulder:   {css:'#b08a5a', hex:0xb08a5a, label:'BOULDER',       dur:15, L:1, sym:'\uD83E\uDEA8'},
   tornado:   {css:'#8ad0ff', hex:0x8ad0ff, label:'TORNADO',       dur:15, L:1, sym:'\uD83C\uDF2A\uFE0F'},
-  sharktrap: {css:'#5ad0d0', hex:0x5ad0d0, label:'SHARK TRAP',    dur:0,  L:1, sym:'\uD83E\uDD88'},
-  chicken:   {css:'#ffe04a', hex:0xffe04a, label:'CHICKEN MODE',  dur:8,  L:1, sym:'\uD83D\uDC14'},
   pacman:    {css:'#ffe83a', hex:0xffe83a, label:'PAC-MAN',       dur:10, L:1, sym:'\uD83D\uDFE1'},
-  kraken:    {css:'#7a5bff', hex:0x7a5bff, label:'KRAKEN',        dur:15, L:1, sym:'\uD83D\uDC19'},
-  snake:     {css:'#5aff9a', hex:0x5aff9a, label:'TRAIL SNAKE',   dur:12, L:1, sym:'\uD83D\uDC0D'},
-  evilclone: {css:'#ff4a4a', hex:0xff4a4a, label:'EVIL CLONE',    dur:12, L:1, sym:'\uD83D\uDC7F'}
+  evilclone: {css:'#ff4a4a', hex:0xff4a4a, label:'EVIL CLONE',    dur:12, L:1, sym:'\uD83D\uDC7F'},
+  reverse:   {css:'#ff8ad0', hex:0xff8ad0, label:'REVERSE WORLD', dur:15, L:1, sym:'\uD83D\uDD04'},
+  quake:     {css:'#c98a4a', hex:0xc98a4a, label:'EARTHQUAKE',    dur:12, L:1, sym:'\uD83C\uDF0B'},
+  fog:       {css:'#aab4c8', hex:0xaab4c8, label:'FOG',           dur:15, L:1, sym:'\uD83C\uDF2B\uFE0F'},
+  faketr:    {css:'#8affc8', hex:0x8affc8, label:'FAKE TRAILS',   dur:15, L:1, sym:'\uD83C\uDCCF'},
+  clone:     {css:'#c8c8ff', hex:0xc8c8ff, label:'CLONE ARMY',    dur:15, L:1, sym:'\uD83D\uDC65'}
 };
 var COMMON_KEYS = ['nitro','ghost','shield','wipe','cannon'];
 var PERM_KEYS = ['jump','airturn','doublejump'];
@@ -326,7 +331,7 @@ function newPlayer(id, color, name){
     pts:[{x:0,z:0}],
     alive:true, score:0,
     speed:BASE_SPEED,
-    fx:{ nitro:0, ghost:0, jump:0, shield:0, eagle:0, kaiju:0, tiny:0, banana:0, bullet:0, rocket:0, spin:0, stun:0, chicken:0, pacman:0 },
+    fx:{ nitro:0, ghost:0, jump:0, shield:0, eagle:0, kaiju:0, tiny:0, banana:0, bullet:0, rocket:0, spin:0, stun:0, pacman:0, reverse:0, quake:0, fog:0, faketr:0, clone:0 },
     bananaT:0,
     hasShield:false,
     upgrades:{jump:false,airturn:false,doublejump:false,cannon:false},
@@ -439,28 +444,41 @@ var Net = {
   brokers:['wss://broker.emqx.io:8084/mqtt','wss://test.mosquitto.org:8081/mqtt'],
   connect:function(code, asHost){
     var self=this;
-    S.mode='online'; S.host=asHost; S.me=asHost?1:2; S.room=code; this.base='gwreck/'+code;
+    S.mode='online'; S.host=asHost; S.room=code; this.base='gwreck/'+code; this._seen={};
+    S.me = asHost ? 1 : null;                       // joiners get assigned a seat 2-4
     if(typeof mqtt==='undefined'){ lobbyErr('Relay library did not load — open this from your hosted link.'); return; }
     lobbyStatus('Connecting to relay...');
-    var url=this.brokers[0];
-    this.client=mqtt.connect(url,{clean:true, connectTimeout:8000, reconnectPeriod:4000,
+    this.client=mqtt.connect(this.brokers[0],{clean:true, connectTimeout:8000, reconnectPeriod:4000,
       clientId:'gw_'+Math.random().toString(16).slice(2)});
     this.client.on('connect', function(){
       self.connected=true;
-      lobbyStatus(asHost?'Room live \u2014 share the link, waiting for a rider...':'On the relay, looking for host...');
-      self.client.subscribe(self.base+'/#',{qos:0}, function(){ self.sayHello(); if(S.screen==='hud') self.beginSend(); });
+      self.client.subscribe(self.base+'/#',{qos:0}, function(){
+        if(asHost){ self.sayHello(); lobbyStatus('Room live \u2014 share the link, waiting for riders...'); if(S.screen==='hud') self.beginSend(); }
+        else { lobbyStatus('On the relay, finding a seat...'); setTimeout(function(){ self.assignSeat(); }, 800); }
+      });
     });
     this.client.on('message', function(topic,payload){ self.onMsg(topic,payload); });
     this.client.on('error', function(e){ lobbyErr('Relay error: '+((e&&e.message)||e)); });
     this.client.on('close', function(){ self.connected=false; });
   },
-  sayHello:function(){ var p=S.players[S.me]; if(!p) return;
+  assignSeat:function(){
+    if(S.me) return;
+    var s=2; while(s<=4 && this._seen[s]) s++;
+    if(s>4){ lobbyErr('Room is full (4 riders).'); return; }
+    S.me=s;
+    S.players[s]=newPlayer(s, COLORS[(s-1)%COLORS.length].hex, S.name);
+    if(Game.scene) Game.spawnMeshes(S.players[s]);
+    this.sayHello(); refreshLobby(true);
+    lobbyStatus('Seated as rider '+s+' \u2014 waiting for host to start.');
+    if(S.screen==='hud') this.beginSend();
+  },
+  sayHello:function(){ if(!S.me) return; var p=S.players[S.me]; if(!p) return;
     this.pub('hello/'+S.me, {t:'hello',from:S.me,n:p.name,c:p.color}, true); },
   pub:function(sub,obj,retain){
     if(this.client&&this.connected){ try{ this.client.publish(this.base+'/'+sub, JSON.stringify(obj), {retain:!!retain,qos:0}); }catch(e){} }
   },
   beginSend:function(){
-    var self=this; if(this.sendT) return;
+    var self=this; if(this.sendT||!S.me) return;
     this.sendT=setInterval(function(){ self.pub('state/'+S.me, self.state(), false); }, 100);
     if(S.host) this.puT=setInterval(function(){ self.pub('pu', {t:'pu',from:S.me,list:S.powerups,seed:S.seed,round:S.round}, true); }, 350);
   },
@@ -470,26 +488,30 @@ var Net = {
       fx:p.fx, upgrades:p.upgrades, sc:S.scores[S.me]||0, cons:p.consumedLocal, holes:S.blastHoles};
   },
   onMsg:function(topic,payload){
-    var parts=topic.split('/'), kind=parts[2];
+    var parts=topic.split('/'), kind=parts[2], id=parts[3]?parseInt(parts[3]):0;
     var d; try{ d=JSON.parse(payload.toString()); }catch(e){ return; }
-    if(!d||d.from===S.me) return;                 // ignore our own echoes
-    var oid=S.me===1?2:1;
+    if(!d) return;
     if(kind==='hello'){
-      if(!S.players[oid]){ S.players[oid]=newPlayer(oid, d.c||COLORS[1].hex, d.n); if(Game.scene) Game.spawnMeshes(S.players[oid]); }
-      S.players[oid].name=d.n; S.players[oid].color=d.c||S.players[oid].color;
-      refreshLobby(true); this.sayHello();        // make sure they have ours too
+      if(id){ this._seen[id]=true;
+        if(id!==S.me){
+          if(!S.players[id]){ S.players[id]=newPlayer(id, d.c||COLORS[(id-1)%COLORS.length].hex, d.n); if(Game.scene) Game.spawnMeshes(S.players[id]); }
+          S.players[id].name=d.n; S.players[id].color=d.c||S.players[id].color;
+          refreshLobby(true); this.sayHello();
+        }
+      }
     } else if(kind==='start'){
       if(!S.host){ S.round=d.round||S.round; S.seed=d.seed||S.seed; if(d.map){ S.map=d.map; buildMap(); } newRound(); }
     } else if(kind==='pu'){
       if(!S.host){ S.powerups=d.list||S.powerups; S.seed=d.seed||S.seed; S.round=d.round||S.round; }
     } else if(kind==='state'){
-      var o=S.players[oid];
-      if(!o){ o=newPlayer(oid, d.c||COLORS[1].hex, d.n); S.players[oid]=o; if(Game.scene) Game.spawnMeshes(o); }
+      if(!id || id===S.me) return;
+      var o=S.players[id];
+      if(!o){ o=newPlayer(id, d.c||COLORS[(id-1)%COLORS.length].hex, d.n); S.players[id]=o; if(Game.scene) Game.spawnMeshes(o); }
       o.name=d.n; o.color=d.c||o.color; o.pts=d.pts||o.pts; o.x=d.x; o.z=d.z; o.dir=d.dir; o.alive=d.alive;
       o.fx=d.fx||o.fx; o.upgrades=d.upgrades||o.upgrades; if(d.holes) S.blastHoles=d.holes;
       o.ts=Date.now();
       if(d.cons){ for(var k in d.cons) S.consumed[k]=true; }
-      if(typeof d.sc==='number') S.scores[oid]=d.sc;
+      if(typeof d.sc==='number') S.scores[id]=d.sc;
     }
   },
   startRace:function(){
@@ -511,12 +533,11 @@ var Net = {
 };
 
 function connLive(){
-  var o=S.players[S.me===1?2:1];
-  var live = o && o.ts && (Date.now()-o.ts < 2500);
   var d=el('connDot'), c=el('conn');
   if(S.mode==='solo'){ d.style.color='#b6ff2b'; c.textContent='solo'; return; }
-  d.style.color = live?'#b6ff2b':'#ff6b6b';
-  c.textContent = live?'online':'waiting...';
+  var n=0; for(var id in S.players){ var o=S.players[id]; if(o.id!==S.me && o.ts && (Date.now()-o.ts<2500)) n++; }
+  d.style.color = n>0?'#b6ff2b':'#ff6b6b';
+  c.textContent = n>0?(n+' online'):'waiting...';
 }
 
 function code4(){ var s='',a='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; for(var i=0;i<4;i++) s+=a[Math.floor(Math.random()*a.length)]; return s; }
@@ -525,7 +546,7 @@ function createRoom(){
   el('menuErr').textContent='';
   if(typeof mqtt==='undefined'){ el('menuErr').textContent='Online needs the hosted link (GitHub Pages). Solo & Test work here.'; return; }
   S.mode='online'; S.me=1; S.host=true; S.room=code4();
-  S.players={1:newPlayer(1, COLORS[S.colorIdx].hex, S.name)};
+  S.players={1:newPlayer(1, COLORS[0].hex, S.name)};
   Net.connect(S.room, true);
   enterLobby();
 }
@@ -533,9 +554,8 @@ function createRoom(){
 function joinRoom(code){
   el('menuErr').textContent='';
   if(typeof mqtt==='undefined'){ el('menuErr').textContent='Online needs the hosted link (GitHub Pages).'; return; }
-  S.mode='online'; S.me=2; S.host=false; S.room=code;
-  S.players={2:newPlayer(2, COLORS[S.colorIdx].hex, S.name)};
-  Net.connect(code, false);
+  S.mode='online'; S.host=false; S.room=code; S.players={};
+  Net.connect(code, false);   // seat (2-4) assigned once we see who's already in
   enterLobby();
 }
 
@@ -546,16 +566,16 @@ function enterLobby(){
 }
 function refreshLobby(){
   var wrap=el('lobbyPlayers'); wrap.innerHTML='';
-  [1,2].forEach(function(id){
+  [1,2,3,4].forEach(function(id){
     var p=S.players[id];
     var d=document.createElement('div'); d.className='pill';
     var c = p?COLORS.find(function(x){return x.hex===p.color;}):null;
-    d.innerHTML='<span class="dot" style="color:'+(c?c.css:'#556')+'"></span>'+(p?p.name:'empty seat')+(id===1?' (host)':'');
+    d.innerHTML='<span class="dot" style="color:'+(c?c.css:'#556')+'"></span>'+(p?p.name:'open seat')+(id===1?' (host)':'');
     wrap.appendChild(d);
   });
-  var two = S.players[1]&&S.players[2];
-  el('lobbyStatus').textContent = two?'Both riders in. Host can start.':'Waiting for a second rider...';
-  el('startBtn').disabled = !(S.host && two);
+  var n=0; for(var k in S.players) n++;
+  el('lobbyStatus').textContent = n>=2 ? (n+' riders in \u2014 host can start (up to 4).') : 'Waiting for riders... (up to 4)';
+  el('startBtn').disabled = !(S.host && n>=2);
 }
 
 function startSolo(){
@@ -597,7 +617,7 @@ function buildLab(){
   }
   label('EARLY 0-1min:'); ['cannon','jump','wipe','shield','ghost','nitro','disco'].forEach(chip);
   label('LATE 1min+:'); ['ufo','bullet','rocket','tiny','airturn','doublejump'].forEach(chip);
-  label('RARE 45s+ (20%):'); ['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','sharktrap','chicken','pacman','kraken','snake','evilclone'].forEach(chip);
+  label('RARE 45s+ (20%):'); ['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone'].forEach(chip);
   var reset=document.createElement('div'); reset.className='tt'; reset.textContent='\u21BB RESET';
   reset.onclick=function(){ resetRound(false); }; strip.appendChild(reset);
 }
@@ -763,8 +783,9 @@ var Game = {
     var dx=b.x-a.x, dz=b.z-a.z; var len=Math.hypot(dx,dz); if(len<0.02) return null;
     var sz=sizeFor(mode||'normal'); var w=sz.w, h=sz.h;
     var gy=groundHeight((a.x+b.x)/2, (a.z+b.z)/2);
+    var wy=((a.wy||0)+(b.wy||0))/2;
     var m=new THREE.Mesh(new THREE.BoxGeometry(w, h, len), p.trailMat);
-    m.position.set((a.x+b.x)/2, gy+h/2, (a.z+b.z)/2);
+    m.position.set((a.x+b.x)/2, gy+wy+h/2, (a.z+b.z)/2);
     m.rotation.y = Math.atan2(dx,dz);
     return m;
   },
@@ -780,10 +801,10 @@ var Game = {
       p._builtPts=p.pts.length;
     }
     this.clearGroup(p.liveGroup);
-    var drawing = !(p.fx.ghost>0 || p.y>1.2 || p.fx.eagle>0 || p.fx.rocket>0 || p.fx.ac130>0 || p.fx.pacman>0);
+    var drawing = !(p.fx.ghost>0 || p.fx.eagle>0 || p.fx.rocket>0 || p.fx.ac130>0 || p.fx.pacman>0);
     if(drawing){
       var cm = p.fx.tiny>0?'tiny':(p.fx.kaiju>0?'kaiju':'normal');
-      var last=p.pts[p.pts.length-1], head={x:p.x,z:p.z};
+      var last=p.pts[p.pts.length-1], head={x:p.x,z:p.z,wy:p.y||0};
       if(Math.hypot(head.x-last.x,head.z-last.z) > 0.4){ var s2=this.segMesh(last, head, p, cm); if(s2) p.liveGroup.add(s2); }
     }
   },
@@ -1084,8 +1105,8 @@ function chaosLevel(){ return Math.min(1,S.roundTime/95); }
 
 var REG_EARLY=['cannon','jump','wipe','shield','ghost','nitro','disco'];
 var REG_LATE =['cannon','jump','wipe','shield','ghost','nitro','disco','ufo','bullet','rocket','tiny','airturn','doublejump'];
-var LEGEND3  =['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','sharktrap','chicken','pacman','kraken','snake','evilclone'];
-var LEGEND3_SET={eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,sharktrap:1,chicken:1,pacman:1,kraken:1,snake:1,evilclone:1};
+var LEGEND3  =['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone'];
+var LEGEND3_SET={eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,pacman:1,evilclone:1,reverse:1,quake:1,fog:1,faketr:1,clone:1};
 
 function spawnPU(forced){
   var t=forced || REG_EARLY[Math.floor(rng()*REG_EARLY.length)];
@@ -1112,24 +1133,23 @@ function spawnManager(dt){
 
 function resetRound(bump){
   S.over=false; el('round').classList.remove('show');
-  var starts=[{x:-40,z:60,dir:'N'},{x:40,z:60,dir:'N'}];
-  var i=0;
+  var starts=[{x:-70,z:110,dir:'N'},{x:70,z:110,dir:'N'},{x:-130,z:110,dir:'N'},{x:130,z:110,dir:'N'}];
   for(var id in S.players){
     var p=S.players[id];
-    var st=starts[i%2]; i++;
+    var st=starts[(p.id-1)%starts.length];
     p.x=st.x; p.z=st.z; p.dir=st.dir;
     p.pts=[{x:p.x,z:p.z}]; p.alive=true; p.speed=BASE_SPEED;
-    p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0,chicken:0,pacman:0};
+    p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0,pacman:0,reverse:0,quake:0,fog:0,faketr:0,clone:0};
     p.hasShield=false; p.y=0; p.jumpV=0; p.jumpsUsed=0; p.cannonCD=0; p.lastTurn=-1; p.bananaT=0; p.items=[]; p.sizeMode='normal';
     p.upgrades={jump:false,airturn:false,doublejump:false,cannon:false};   // abilities don't carry between rounds
-    p.groundY=groundHeight(p.x,p.z); p.groundVy=0; p.lastGY=p.groundY;
+    p.groundY=groundHeight(p.x,p.z); p.groundVy=0; p.lastGY=p.groundY; p._sc=1; p.cannonCharges=0;
     p.consumedLocal={};
     Game.resetTrails(p);
     if(p.mesh){ p.mesh.position.set(p.x,0,p.z); p.mesh.scale.set(1,1,1); p.mesh.visible=true; }
     if(p.eagle) p.eagle.visible=false;
   }
   S.global={moon:0,disco:0}; S.peels=[]; S.roundTime=0; S.blastHoles=[]; S.cannonShots=[];
-  S.meteor=0; S.bh=null; S.boulder=null; S.tornado=null; S.traps=[]; S.kraken=null; S.snake=null; S.evil=null;
+  S.meteor=0; S.bh=null; S.boulder=null; S.tornado=null; S.evil=null;
   Game.camYaw=0;
   if(S.mode==='solo'){ seedPowerups(); }
   toast('ROUND '+S.round+'  //  GO', COLORS[S.colorIdx].css, 1100);
@@ -1160,12 +1180,14 @@ window.addEventListener('keydown', function(e){
   if(e.key==='ArrowRight'||e.key==='d'||e.key==='D') turn(1);
   if(e.code==='Space'){ e.preventDefault(); if(inEagle()) eagleFire(); else doJump(S.players[S.me]); }
   if(e.key==='e'||e.key==='E') useItem();
+  if(e.key==='f'||e.key==='F'){ if(inEagle()) eagleFire(); else fireCannonShot(); }
 });
 var isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints>0;
 function bindTap(id,fn){ var b=el(id); ['touchstart','mousedown'].forEach(function(ev){ b.addEventListener(ev,function(e){e.preventDefault(); fn();},{passive:false}); }); }
 bindTap('tLeft', function(){ turn(-1); });
 bindTap('tRight', function(){ turn(1); });
 bindTap('tUse', function(){ useItem(); });
+bindTap('tAct', function(){ if(inEagle()) eagleFire(); else fireCannonShot(); });
 // tap the middle of the screen to jump (tap again = double jump if you have it)
 (function(){ var z=el('tapzone'); if(!z) return; ['touchstart','mousedown'].forEach(function(ev){
   z.addEventListener(ev,function(e){ e.preventDefault(); if(inGun())return; if(inEagle()) eagleFire(); else doJump(S.players[S.me]); },{passive:false}); }); })();
@@ -1197,9 +1219,10 @@ function turn(d){
   if(!S.running||S.over) return;
   var p=S.players[S.me]; if(!p||!p.alive) return;
   if(inGun()) return;
-  if(p.fx.stun>0||p.fx.chicken>0) return;
+  if(p.fx.stun>0) return;
   if(p.y>0.35 && !(p.upgrades&&p.upgrades.airturn) && !(p.fx.eagle>0) && !(p.fx.rocket>0)) return;
   if(p.fx.spin>0) d=-d;
+  if(p.fx.reverse>0) d=-d;            // reverse world
   var now=performance.now()/1000;
   if(now - p.lastTurn < TURN_COOLDOWN) return;
   p.lastTurn=now;
@@ -1353,6 +1376,51 @@ function trailHitSelf(p){
 }
 
 function isImmune(p){ return p.fx.ghost>0||p.y>1.2||p.fx.eagle>0||p.fx.kaiju>0||p.fx.rocket>0||p.fx.ac130>0||p.fx.pacman>0; }
+function nearestFoe(p){ var f=null,b=1e9; for(var id in S.players){ var o=S.players[id]; if(o.id===p.id||!o.alive)continue; var d=Math.hypot(o.x-p.x,o.z-p.z); if(d<b){b=d;f=o;} } return f; }
+// local-only view effects: applied to MY screen based on MY fx, plus clones of OTHERS
+function applyViewFx(dt){
+  if(!Game.scene) return;
+  var me=S.players[S.me];
+  // EARTHQUAKE — my camera rattles
+  if(me && me.fx.quake>0) shake(0.6);
+  // FOG — I can barely see
+  if(Game.scene.fog){ if(me && me.fx.fog>0){ Game.scene.fog.near=6; Game.scene.fog.far=48; } else { Game.scene.fog.near=120; Game.scene.fog.far=420; } }
+  // FAKE TRAILS — phantom walls around me (no collision)
+  if(!Game.fakeGroup){ Game.fakeGroup=new THREE.Group(); Game.scene.add(Game.fakeGroup); Game._fakeT=0; }
+  if(me && me.fx.faketr>0){ Game._fakeT-=dt;
+    if(Game._fakeT<=0){ Game._fakeT=1.1; Game.clearGroup(Game.fakeGroup);
+      for(var i=0;i<8;i++){ var ax=me.x+(Math.random()*2-1)*70, az=me.z+(Math.random()*2-1)*70;
+        var hor=Math.random()<0.5, len=20+Math.random()*30;
+        var bx=hor?ax+len:ax, bz=hor?az:az+len;
+        var m=new THREE.Mesh(new THREE.BoxGeometry(hor?len:0.7,WALL_H,hor?0.7:len), new THREE.MeshBasicMaterial({color:0x8affc8, transparent:true, opacity:0.35}));
+        m.position.set((ax+bx)/2, WALL_H/2, (az+bz)/2); Game.fakeGroup.add(m); }
+    }
+  } else if(Game.fakeGroup.children.length){ Game.clearGroup(Game.fakeGroup); }
+  // CLONE ARMY — I (enemy) see fake copies of any OTHER rider who cast it
+  Game.cloneGroups=Game.cloneGroups||{};
+  for(var id in S.players){ var p=S.players[id];
+    var show = (p.id!==S.me) && p.alive && p.fx.clone>0;
+    var cg=Game.cloneGroups[id];
+    if(show){
+      if(!cg){ cg={group:new THREE.Group(), bikes:[]}; Game.scene.add(cg.group);
+        for(var c=0;c<5;c++){ var bk=Game.bikeMesh(p.color); cg.group.add(bk);
+          cg.bikes.push({mesh:bk, x:p.x, z:p.z, dir:CW[Math.floor(Math.random()*4)], t:0}); }
+        Game.cloneGroups[id]=cg;
+      }
+      for(var b=0;b<cg.bikes.length;b++){ var cb=cg.bikes[b]; cb.t-=dt;
+        if(cb.t<=0){ cb.t=0.4+Math.random()*0.8; var li=CW.indexOf(cb.dir); cb.dir=CW[(li+(Math.random()<0.5?1:3))%4]; }
+        var dd=DIRS[cb.dir]; var ox=cb.x, oz=cb.z; cb.x+=dd.x*BASE_SPEED*dt; cb.z+=dd.z*BASE_SPEED*dt;
+        cb.x=Math.max(-HALF+2,Math.min(HALF-2,cb.x)); cb.z=Math.max(-HALF+2,Math.min(HALF-2,cb.z));
+        cb.mesh.position.set(cb.x, groundHeight(cb.x,cb.z), cb.z); cb.mesh.rotation.y=Math.atan2(dd.x,dd.z);
+        cb.dr=(cb.dr||0)-dt; if(cb.dr<=0){ cb.dr=0.12; var seg=new THREE.Mesh(new THREE.BoxGeometry(0.55,WALL_H,Math.max(0.5,Math.hypot(cb.x-ox,cb.z-oz)+0.5)),
+          new THREE.MeshBasicMaterial({color:p.color, transparent:true, opacity:0.3}));
+          seg.position.set((cb.x+ox)/2, groundHeight(cb.x,cb.z)+WALL_H/2, (cb.z+oz)/2); seg.rotation.y=Math.atan2(dd.x,dd.z); cg.group.add(seg);
+          while(cg.group.children.length>5+140){ var old=cg.group.children[5]; cg.group.remove(old); if(old.geometry)old.geometry.dispose(); }
+        }
+      }
+    } else if(cg){ Game.scene.remove(cg.group); Game.clearGroup(cg.group); delete Game.cloneGroups[id]; }
+  }
+}
 function bendTrails(cx,cz,range){
   for(var id in S.players){ var p=S.players[id], ch=false;
     for(var i=1;i<p.pts.length;i++){ var pt=p.pts[i]; if(pt.brk) continue;
@@ -1433,14 +1501,14 @@ function stepHazards(dt){
 }
 function stepPlayer(p, dt){
   if(!p.alive) return;
-  ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun','chicken','pacman']
+  ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun','pacman','reverse','quake','fog','faketr','clone']
     .forEach(function(k){ if(p.fx[k]>0) p.fx[k]=Math.max(0,p.fx[k]-dt); });
   // lock wall size per-segment: when size mode changes, seal the current segment at its size
   var cmode = p.fx.tiny>0?'tiny':(p.fx.kaiju>0?'kaiju':'normal');
   if(p.sizeMode===undefined) p.sizeMode='normal';
-  if(cmode!==p.sizeMode){ p.pts.push({x:p.x,z:p.z, mode:p.sizeMode}); p._builtPts=-1; p.sizeMode=cmode; }
+  if(cmode!==p.sizeMode){ p.pts.push({x:p.x,z:p.z, mode:p.sizeMode, wy:p.y||0}); p._builtPts=-1; p.sizeMode=cmode; }
   // on sloped ground, seal segments as height changes so the wall stays where it was laid
-  if(S.map==='gauntlet'){ var gyn=groundHeight(p.x,p.z); if(Math.abs(gyn-(p.lastGY||0))>3){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode}); p._builtPts=-1; p.lastGY=gyn; } }
+  if(S.map==='gauntlet'){ var gyn=groundHeight(p.x,p.z); if(Math.abs(gyn-(p.lastGY||0))>3){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:p.y||0}); p._builtPts=-1; p.lastGY=gyn; } }
   // CHICKEN: flail with random turns, no control
   if(p.fx.chicken>0){ p.chkT=(p.chkT||0)-dt; if(p.chkT<=0){ p.chkT=0.18+Math.random()*0.3;
     var cli=CW.indexOf(p.dir); p.pts.push({x:p.x,z:p.z,mode:p.sizeMode}); p.dir=CW[(cli+(Math.random()<0.5?1:3))%4]; } }
@@ -1451,7 +1519,7 @@ function stepPlayer(p, dt){
   var spd = BASE_SPEED;
   if(p.fx.nitro>0 || p.fx.rocket>0) spd*=1.75;
   if(p.fx.tiny>0)  spd*=1.25;
-  if(p.fx.kaiju>0) spd*=0.9;
+  if(p.fx.kaiju>0) spd*=0.65;
   if(S.global.moon>0) spd*=0.85;
   if(p.fx.spin>0)  spd*=0.7;
   for(var bid in S.players){ if(bid!=p.id && S.players[bid].fx.bullet>0){ spd*=0.35; } }
@@ -1531,10 +1599,14 @@ function killOrShield(p){
   checkRoundEnd();
 }
 
-var HELD_TYPES={nitro:1,ghost:1,shield:1,wipe:1,cannon:1,tiny:1,ufo:1,bullet:1,rocket:1,eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,sharktrap:1,chicken:1,pacman:1,kraken:1,snake:1,evilclone:1};   // stored; jump is the only instant/permanent one
+var HELD_TYPES={nitro:1,ghost:1,shield:1,wipe:1,tiny:1,ufo:1,bullet:1,rocket:1,eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,pacman:1,evilclone:1,reverse:1,quake:1,fog:1,faketr:1,clone:1};   // stored; jump is the only instant/permanent one
 function pickup(p,pu){
   if(pu.id){ S.consumed[pu.id]=true; p.consumedLocal[pu.id]=true; }
   var t=PU_TYPES[pu.type];
+  // cannon = 3 separate shots you fire one at a time (human); AI auto-fires
+  if(pu.type==='cannon' && p.id===S.me && !p.isAI){
+    p.cannonCharges=(p.cannonCharges||0)+3; toast('\uD83D\uDCA5 CANNON x3 \u2014 press FIRE', t.css, 1200); flash(t.css); return;
+  }
   // human holds activatable items; AI just auto-uses them
   if(HELD_TYPES[pu.type] && p.id===S.me && !p.isAI){
     p.items=p.items||[];
@@ -1549,6 +1621,7 @@ function pickup(p,pu){
     if(t.L) shake(1.0);
   }
 }
+function fireCannonShot(){ var p=S.players[S.me]; if(!p||!p.alive||!(p.cannonCharges>0)) return; p.cannonCharges--; fireBigCannon(p); }
 function useItem(){
   var p=S.players[S.me]; if(!p||!p.alive||!p.items||!p.items.length) return;
   var type=p.items.shift(); var t=PU_TYPES[type];
@@ -1569,21 +1642,18 @@ function applyEffect(p, type){
     case 'wipe':   p.pts=[{x:p.x,z:p.z}]; Game.resetTrails(p); p.committedTo=1; break;
     case 'disco':  S.global.disco=t.dur; break;
     case 'eagle':  p.fx.eagle=t.dur; eagleFX(p.x,p.z); break;
-    case 'kaiju':  p.fx.kaiju=t.dur; kaijuFX(p.x,p.z); break;
+    case 'kaiju':  p.fx.kaiju=t.dur; kaijuFX(p.x,p.z); sfxFile(SND_KAIJU); break;
     case 'rocket': p.fx.rocket=t.dur; setTimeout(function(){ rocketSlam(p); }, (t.dur*1000)-30); break;
     case 'meteor': S.meteor=15; S.meteorT=0; if(p.id===S.me) toast('\u2604\uFE0F METEOR STRIKE','#ff7a3a',1400); break;
     case 'blackhole': S.bh={x:Math.round((rng()*2-1)*(HALF-34)),z:Math.round((rng()*2-1)*(HALF-34)),life:15}; if(p.id===S.me) toast('\uD83C\uDF00 BLACK HOLE','#9b5bff',1400); break;
     case 'boulder': { var ang=rng()*6.28; S.boulder={x:Math.round((rng()*2-1)*40),z:Math.round((rng()*2-1)*40),dx:Math.cos(ang),dz:Math.sin(ang),life:15,carveT:0}; if(p.id===S.me) toast('\uD83E\uDEA8 BOULDER','#b08a5a',1400); break; }
     case 'tornado': { var ta=rng()*6.28; S.tornado={x:Math.round((rng()*2-1)*40),z:Math.round((rng()*2-1)*40),dx:Math.cos(ta),dz:Math.sin(ta),life:15,throwT:0}; if(p.id===S.me) toast('\uD83C\uDF2A\uFE0F TORNADO','#8ad0ff',1400); break; }
-    case 'sharktrap': { var d2=DIRS[p.dir]; S.traps.push({x:p.x-d2.x*8, z:p.z-d2.z*8, owner:p.id, arm:1.4}); if(p.id===S.me) toast('\uD83E\uDD88 SHARK TRAP SET','#5ad0d0',1200); break; }
-    case 'chicken': { var foe2=null,bd2=1e9; for(var cid in S.players){ var o2=S.players[cid]; if(o2.id===p.id||!o2.alive)continue; var dd2=Math.hypot(o2.x-p.x,o2.z-p.z); if(dd2<bd2){bd2=dd2;foe2=o2;} }
-      if(foe2){ foe2.fx.chicken=8; foe2.chkT=0; if(foe2.id===S.me) toast('\uD83D\uDC14 YOU ARE A CHICKEN','#ffe04a',1400); } break; }
     case 'pacman': p.fx.pacman=10; p.pacT=0; if(p.id===S.me) toast('\uD83D\uDFE1 PAC-MAN!','#ffe83a',1400); break;
-    case 'kraken': S.kraken={x:Math.round(p.x),z:Math.round(p.z),life:15,actT:0}; if(p.id===S.me) toast('\uD83D\uDC19 KRAKEN RELEASED','#7a5bff',1400); break;
-    case 'snake': { var sf3=null,sb3=1e9; for(var s3 in S.players){ var o3=S.players[s3]; if(o3.id===p.id||!o3.alive)continue; var d3=Math.hypot(o3.x-p.x,o3.z-p.z); if(d3<sb3){sb3=d3;sf3=o3;} }
-      if(sf3){ S.snake={foe:sf3.id, life:12}; if(sf3.id===S.me) toast('\uD83D\uDC0D TRAIL SNAKE','#5aff9a',1400); } break; }
     case 'evilclone': { var ef=null,eb=1e9; for(var e3 in S.players){ var oe=S.players[e3]; if(oe.id===p.id||!oe.alive)continue; var de=Math.hypot(oe.x-p.x,oe.z-p.z); if(de<eb){eb=de;ef=oe;} }
       if(ef){ S.evil={x:ef.x, z:ef.z-30, dir:'S', life:12, target:ef.id, color:ef.color}; if(ef.id===S.me) toast('\uD83D\uDC7F EVIL CLONE HUNTS YOU','#ff4a4a',1500); } break; }
+    case 'reverse': case 'quake': case 'fog': case 'faketr': {
+      var vt = S.test ? p : nearestFoe(p); if(vt){ vt.fx[type]=PU_TYPES[type].dur; if(vt.id===S.me) toast((PU_TYPES[type].sym||'')+' '+PU_TYPES[type].label,PU_TYPES[type].css,1400); } break; }
+    case 'clone': p.fx.clone=15; sfxFile(SND_CLONE); if(p.id===S.me) toast('\uD83D\uDC65 CLONE ARMY','#c8c8ff',1400); break;
     case 'ufo': {
       var foe=null,bd=1e9;
       for(var id in S.players){ var o=S.players[id]; if(o.id===p.id||!o.alive)continue;
@@ -1625,6 +1695,7 @@ function checkRoundEnd(){
 function showRoundOver(winner){
   var meWon = winner && winner.id===S.me;
   var matchWinner = winner && (S.scores[winner.id]||0) >= 3;
+  if(matchWinner){ sfxFile(Math.random()<0.5?SND_WIN1:SND_WIN2); }
   el('round').classList.add('show');
   if(matchWinner){
     el('roundText').textContent = meWon ? 'YOU WIN THE MATCH!' : (winner.name+' WINS THE MATCH');
@@ -1667,7 +1738,7 @@ function freeDist(x,z,dir,maxD){
 }
 
 function aiThink(p, dt){
-  if(!p.alive || p.fx.chicken>0) return;
+  if(!p.alive) return;
   var D=(S.test?DIFFS.chill:(DIFFS[S.diff]||DIFFS.normal));
   p.aiReact=(p.aiReact||0)-dt;
   p.aiStraight=(p.aiStraight||0)+dt;
@@ -1749,12 +1820,16 @@ function loop(t){
 
   stepCannons(dt);
   if(!S.over) stepHazards(dt);
+  applyViewFx(dt);
   updateMusic();
   if(S.mode==='online') connLive();
   var anyEagle=false; for(var eg in S.players){ if(S.players[eg].alive && S.players[eg].fx.eagle>0){ anyEagle=true; break; } }
   if(anyEagle) startEagleSong(); else stopEagleSong();
   // AC-130 gunship: hold-fire, reticle, countdown, exit
   var meG=S.players[S.me];
+  var actBtn=el('tAct'); if(actBtn){ var showAct = meG && meG.alive && (meG.fx.eagle>0 || (meG.cannonCharges>0));
+    actBtn.classList.toggle('on', !!showAct);
+    actBtn.textContent = (meG&&meG.fx.eagle>0)?'\uD83D\uDD25 FIRE':('\uD83D\uDCA5 '+(meG?(meG.cannonCharges||0):0)); }
   if(meG && meG.fx.ac130>0){
     if(S.aim){ var PAN=150; S.aim.x=Math.max(-HALF,Math.min(HALF,S.aim.x+stick.dx*PAN*dt)); S.aim.z=Math.max(-HALF,Math.min(HALF,S.aim.z+stick.dz*PAN*dt)); }
     if(!Game.reticle && Game.scene){
@@ -1786,7 +1861,11 @@ function loop(t){
     var gy = (pp===S.players[S.me]||pp.isAI) ? (pp.groundY||0) : groundHeight(rx,rz);
     pp.mesh.position.set(rx, gy - holeDisp(rx,rz) + (pp.y||0), rz);
     pp.mesh.rotation.y = Math.atan2(DIRS[pp.dir].x, DIRS[pp.dir].z);
-    var sc = pp.fx.kaiju>0?3.6 : (pp.fx.tiny>0?0.3:1);
+    var target = pp.fx.kaiju>0?3.6 : (pp.fx.tiny>0?0.3:1);
+    if(pp._sc===undefined) pp._sc=1;
+    if(pp.fx.kaiju>0) pp._sc += (target-pp._sc)*Math.min(1,dt*1.1);   // slow epic build-up
+    else pp._sc = target;
+    var sc = pp._sc;
     pp.mesh.scale.set(sc,sc,sc);
     var op = (pp.fx.ghost>0)?0.35:1;
     pp.mesh.traverse(function(o){ if(o.material&&'opacity' in o.material){ o.material.transparent=(op<1); o.material.opacity=op; } });
@@ -1911,6 +1990,7 @@ function stopEagleSong(){ if(!eagleSongOn) return; eagleSongOn=false;
 }
 // one-shot sound files (overlap-safe: fresh element each call)
 var AC_START='AC130_START.wav', AC_EXPLODE='AC130%20Explode.wav';
+var SND_CLONE='Sounds/Mark_Builder.wav', SND_KAIJU='Sounds/Jordan_build.wav', SND_WIN1='Sounds/Jordan_Sweat.wav', SND_WIN2='Sounds/Bo_Fuck.wav';
 function sfxFile(url){ try{ var a=new Audio(url); a.volume=0.9; a.play().catch(function(){}); }catch(e){} }
 function kaijuFX(x,z){
   Music.sfx('kaiju');

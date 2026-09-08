@@ -246,7 +246,7 @@ var COLORS = [
   {name:'lime',   hex:0xb6ff2b, css:'#b6ff2b'},
   {name:'orange', hex:0xff8a1e, css:'#ff8a1e'}
 ];
-var ARENA = 220;
+var ARENA = 320;
 var HALF = ARENA/2;
 var BASE_SPEED = 46;
 var WALL_H = 6.2;
@@ -274,7 +274,14 @@ var PU_TYPES = {
   ac130:  {css:'#ffe08a', hex:0xffe08a, label:'AC-130 GUNSHIP',dur:20.0, L:1, sym:'\uD83D\uDEE9\uFE0F', emo:'\uD83D\uDEE9\uFE0F'},
   meteor:    {css:'#ff7a3a', hex:0xff7a3a, label:'METEOR STRIKE', dur:15, L:1, sym:'\u2604\uFE0F'},
   blackhole: {css:'#9b5bff', hex:0x9b5bff, label:'BLACK HOLE',    dur:15, L:1, sym:'\uD83C\uDF00'},
-  boulder:   {css:'#b08a5a', hex:0xb08a5a, label:'BOULDER',       dur:15, L:1, sym:'\uD83E\uDEA8'}
+  boulder:   {css:'#b08a5a', hex:0xb08a5a, label:'BOULDER',       dur:15, L:1, sym:'\uD83E\uDEA8'},
+  tornado:   {css:'#8ad0ff', hex:0x8ad0ff, label:'TORNADO',       dur:15, L:1, sym:'\uD83C\uDF2A\uFE0F'},
+  sharktrap: {css:'#5ad0d0', hex:0x5ad0d0, label:'SHARK TRAP',    dur:0,  L:1, sym:'\uD83E\uDD88'},
+  chicken:   {css:'#ffe04a', hex:0xffe04a, label:'CHICKEN MODE',  dur:8,  L:1, sym:'\uD83D\uDC14'},
+  pacman:    {css:'#ffe83a', hex:0xffe83a, label:'PAC-MAN',       dur:10, L:1, sym:'\uD83D\uDFE1'},
+  kraken:    {css:'#7a5bff', hex:0x7a5bff, label:'KRAKEN',        dur:15, L:1, sym:'\uD83D\uDC19'},
+  snake:     {css:'#5aff9a', hex:0x5aff9a, label:'TRAIL SNAKE',   dur:12, L:1, sym:'\uD83D\uDC0D'},
+  evilclone: {css:'#ff4a4a', hex:0xff4a4a, label:'EVIL CLONE',    dur:12, L:1, sym:'\uD83D\uDC7F'}
 };
 var COMMON_KEYS = ['nitro','ghost','shield','wipe','cannon'];
 var PERM_KEYS = ['jump','airturn','doublejump'];
@@ -302,6 +309,7 @@ var S = {
   lastSpawn:0, spawnEvery:5.0, roundTime:0,
   global:{ moon:0, disco:0 },
   blastHoles:[], cannonShots:[],
+  traps:[],
   peels:[],
   test:false,
   diff:'normal',
@@ -318,11 +326,12 @@ function newPlayer(id, color, name){
     pts:[{x:0,z:0}],
     alive:true, score:0,
     speed:BASE_SPEED,
-    fx:{ nitro:0, ghost:0, jump:0, shield:0, eagle:0, kaiju:0, tiny:0, banana:0, bullet:0, rocket:0, spin:0, stun:0 },
+    fx:{ nitro:0, ghost:0, jump:0, shield:0, eagle:0, kaiju:0, tiny:0, banana:0, bullet:0, rocket:0, spin:0, stun:0, chicken:0, pacman:0 },
     bananaT:0,
     hasShield:false,
     upgrades:{jump:false,airturn:false,doublejump:false,cannon:false},
     jumpV:0, jumpsUsed:0, cannonCD:0, items:[],
+    groundY:0, groundVy:0, lastGY:0,
     lastTurn:-1, wantTurn:0,
     consumedLocal:{},
     mesh:null, trailGroup:null, live:null, committedTo:1,
@@ -385,7 +394,7 @@ function grabName(){ var v=el('nameIn').value.trim(); S.name = v || ('Rider'+Mat
 el('soloBtn').onclick = function(){ grabName(); startMusic(); startSolo(); };
 el('testBtn').onclick = function(){ grabName(); startMusic(); startTest(); };
 el('createBtn').onclick = function(){ grabName(); startMusic(); createRoom(); };
-el('joinBtn').onclick = function(){ grabName(); startMusic(); var c=el('joinIn').value.trim().toUpperCase(); if(c.length<3){ el('menuErr').textContent='Enter a room code.'; return;} joinRoom(c); };
+el('joinBtn').onclick = function(){ grabName(); var c=el('joinIn').value.trim().toUpperCase(); if(c.length<3){ el('menuErr').textContent='Enter a room code.'; return;} joinRoom(c); };
 el('leaveBtn').onclick = function(){ Net.stop(); location.reload(); };
 el('startBtn').onclick = function(){ if(S.host) Net.startRace(); };
 el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3||(S.scores[2]||0)>=3) S.scores={1:0,2:0}; resetRound(true);} else if(S.host){ Net.startRace(); } };
@@ -393,7 +402,7 @@ el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3|
 var bgAudio=null, musicOn=true;
 var songName='music.mp3';
 try{ var q=new URLSearchParams(location.search).get('song'); if(q) songName=q; }catch(e){}
-function ensureBg(){ if(bgAudio) return; try{ bgAudio=new Audio(songName); bgAudio.loop=true; bgAudio.preload='auto'; bgAudio.volume=0.7; }catch(e){ bgAudio=null; } }
+function ensureBg(){ if(bgAudio) return; try{ bgAudio=new Audio(songName+'?cb='+Date.now()); bgAudio.loop=true; bgAudio.preload='auto'; bgAudio.volume=0.7; }catch(e){ bgAudio=null; } }
 function setMuteLabel(){ el('mute').innerHTML = musicOn ? '\u266B music' : '\u266A muted'; }
 function startMusic(){ ensureBg(); if(bgAudio && musicOn){ bgAudio.play().catch(function(){}); } }
 function tryUnlock(){ startMusic(); }
@@ -588,7 +597,7 @@ function buildLab(){
   }
   label('EARLY 0-1min:'); ['cannon','jump','wipe','shield','ghost','nitro','disco'].forEach(chip);
   label('LATE 1min+:'); ['ufo','bullet','rocket','tiny','airturn','doublejump'].forEach(chip);
-  label('RARE 45s+ (20%):'); ['eagle','kaiju','ac130','meteor','blackhole','boulder'].forEach(chip);
+  label('RARE 45s+ (20%):'); ['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','sharktrap','chicken','pacman','kraken','snake','evilclone'].forEach(chip);
   var reset=document.createElement('div'); reset.className='tt'; reset.textContent='\u21BB RESET';
   reset.onclick=function(){ resetRound(false); }; strip.appendChild(reset);
 }
@@ -771,7 +780,7 @@ var Game = {
       p._builtPts=p.pts.length;
     }
     this.clearGroup(p.liveGroup);
-    var drawing = !(p.fx.ghost>0 || p.y>1.2 || p.fx.eagle>0 || p.fx.rocket>0 || p.fx.ac130>0);
+    var drawing = !(p.fx.ghost>0 || p.y>1.2 || p.fx.eagle>0 || p.fx.rocket>0 || p.fx.ac130>0 || p.fx.pacman>0);
     if(drawing){
       var cm = p.fx.tiny>0?'tiny':(p.fx.kaiju>0?'kaiju':'normal');
       var last=p.pts[p.pts.length-1], head={x:p.x,z:p.z};
@@ -798,7 +807,7 @@ var Game = {
     var d=tgtYaw-this.camYaw; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI;
     this.camYaw += d*Math.min(1,dt*6);
     var fx=Math.sin(this.camYaw), fz=Math.cos(this.camYaw);
-    var dist=18, hgt=9.5, look=16, ty=terrainY(p.x,p.z);
+    var dist=18, hgt=9.5, look=16, ty=(p.groundY||0) - holeDisp(p.x,p.z);
     var cx=p.x - fx*dist, cz=p.z - fz*dist, cy=hgt + p.y + ty;
     if(this.shakeAmt>0){ this.shakeAmt=Math.max(0,this.shakeAmt-dt*2.2);
       var s=this.shakeAmt*4; cx+=(Math.random()-.5)*s; cy+=(Math.random()-.5)*s; cz+=(Math.random()-.5)*s; }
@@ -980,6 +989,43 @@ var Game = {
     if(S.bh){ this.bhMesh.position.set(S.bh.x, groundHeight(S.bh.x,S.bh.z)+4, S.bh.z); this.bhMesh.rotation.y+=0.12; this.bhMesh.userData.acc.rotation.z+=0.2; }
     this.boulderMesh.visible=!!S.boulder;
     if(S.boulder){ this.boulderMesh.position.set(S.boulder.x, groundHeight(S.boulder.x,S.boulder.z)+4.2, S.boulder.z); this.boulderMesh.rotation.x+=0.16; this.boulderMesh.rotation.z+=0.11; }
+    // tornado funnel
+    if(!this.tornadoMesh){ var tm=new THREE.Mesh(new THREE.ConeGeometry(9,34,20,1,true),
+      new THREE.MeshBasicMaterial({color:0xbfe6ff, transparent:true, opacity:0.35, side:THREE.DoubleSide}));
+      tm.visible=false; this.scene.add(tm); this.tornadoMesh=tm; }
+    this.tornadoMesh.visible=!!S.tornado;
+    if(S.tornado){ this.tornadoMesh.position.set(S.tornado.x, groundHeight(S.tornado.x,S.tornado.z)+17, S.tornado.z); this.tornadoMesh.rotation.y+=0.4; }
+    // shark traps (pool)
+    this.trapMeshes=this.trapMeshes||[];
+    while(this.trapMeshes.length < S.traps.length){
+      var fg=new THREE.Group();
+      var fin=new THREE.Mesh(new THREE.ConeGeometry(1.6,4,4), new THREE.MeshStandardMaterial({color:0x9fd0d0, emissive:0x2a5555, emissiveIntensity:.4}));
+      fin.rotation.y=Math.PI/4; fin.position.y=2; fg.add(fin);
+      this.scene.add(fg); this.trapMeshes.push(fg);
+    }
+    for(var ti=0;ti<this.trapMeshes.length;ti++){ var vis=ti<S.traps.length; this.trapMeshes[ti].visible=vis;
+      if(vis){ var tr=S.traps[ti]; this.trapMeshes[ti].position.set(tr.x, groundHeight(tr.x,tr.z), tr.z); } }
+    // kraken blob
+    if(!this.krakenMesh){ var kg=new THREE.Group();
+      var body=new THREE.Mesh(new THREE.SphereGeometry(6,16,12), new THREE.MeshStandardMaterial({color:0x2a1a55, emissive:0x7a5bff, emissiveIntensity:.4}));
+      kg.add(body);
+      for(var a=0;a<8;a++){ var tent=new THREE.Mesh(new THREE.ConeGeometry(0.9,10,6), new THREE.MeshStandardMaterial({color:0x3a2a66, emissive:0x5a3bff, emissiveIntensity:.3}));
+        var an=a/8*6.28; tent.position.set(Math.cos(an)*5,-4,Math.sin(an)*5); tent.rotation.x=Math.PI; tent.rotation.z=Math.cos(an)*0.4; kg.add(tent); }
+      kg.visible=false; this.scene.add(kg); this.krakenMesh=kg; }
+    this.krakenMesh.visible=!!S.kraken;
+    if(S.kraken){ this.krakenMesh.position.set(S.kraken.x, groundHeight(S.kraken.x,S.kraken.z)+6, S.kraken.z); this.krakenMesh.rotation.y+=0.03; }
+    // evil clone
+    if(S.evil){ if(!this.evilMesh){ this.evilMesh=this.bikeMesh(0xff3030); this.scene.add(this.evilMesh); }
+      this.evilMesh.visible=true; this.evilMesh.position.set(S.evil.x, groundHeight(S.evil.x,S.evil.z), S.evil.z);
+      var et=S.players[S.evil.target]; if(et){ this.evilMesh.rotation.y=Math.atan2(et.x-S.evil.x, et.z-S.evil.z); }
+    } else if(this.evilMesh){ this.evilMesh.visible=false; }
+    // pac-man mouths
+    for(var pid in S.players){ var pp=S.players[pid];
+      if(pp.fx && pp.fx.pacman>0){ if(!pp.pacMesh){ pp.pacMesh=new THREE.Mesh(new THREE.SphereGeometry(5,20,16), new THREE.MeshBasicMaterial({color:0xffe83a})); this.scene.add(pp.pacMesh); }
+        pp.pacMesh.visible=true; pp.pacMesh.position.set(pp.mesh.position.x, pp.mesh.position.y+3, pp.mesh.position.z);
+        pp.pacMesh.scale.y=0.7+Math.abs(Math.sin(performance.now()/90))*0.5; pp.mesh.visible=false;
+      } else if(pp.pacMesh){ pp.pacMesh.visible=false; }
+    }
   },
   render:function(){ this.renderer.render(this.scene,this.camera); },
   obSeg:function(a,b){
@@ -1038,8 +1084,8 @@ function chaosLevel(){ return Math.min(1,S.roundTime/95); }
 
 var REG_EARLY=['cannon','jump','wipe','shield','ghost','nitro','disco'];
 var REG_LATE =['cannon','jump','wipe','shield','ghost','nitro','disco','ufo','bullet','rocket','tiny','airturn','doublejump'];
-var LEGEND3  =['eagle','kaiju','ac130','meteor','blackhole','boulder'];
-var LEGEND3_SET={eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1};
+var LEGEND3  =['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','sharktrap','chicken','pacman','kraken','snake','evilclone'];
+var LEGEND3_SET={eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,sharktrap:1,chicken:1,pacman:1,kraken:1,snake:1,evilclone:1};
 
 function spawnPU(forced){
   var t=forced || REG_EARLY[Math.floor(rng()*REG_EARLY.length)];
@@ -1073,23 +1119,33 @@ function resetRound(bump){
     var st=starts[i%2]; i++;
     p.x=st.x; p.z=st.z; p.dir=st.dir;
     p.pts=[{x:p.x,z:p.z}]; p.alive=true; p.speed=BASE_SPEED;
-    p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0};
+    p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0,chicken:0,pacman:0};
     p.hasShield=false; p.y=0; p.jumpV=0; p.jumpsUsed=0; p.cannonCD=0; p.lastTurn=-1; p.bananaT=0; p.items=[]; p.sizeMode='normal';
     p.upgrades={jump:false,airturn:false,doublejump:false,cannon:false};   // abilities don't carry between rounds
+    p.groundY=groundHeight(p.x,p.z); p.groundVy=0; p.lastGY=p.groundY;
     p.consumedLocal={};
     Game.resetTrails(p);
     if(p.mesh){ p.mesh.position.set(p.x,0,p.z); p.mesh.scale.set(1,1,1); p.mesh.visible=true; }
     if(p.eagle) p.eagle.visible=false;
   }
   S.global={moon:0,disco:0}; S.peels=[]; S.roundTime=0; S.blastHoles=[]; S.cannonShots=[];
-  S.meteor=0; S.bh=null; S.boulder=null;
+  S.meteor=0; S.bh=null; S.boulder=null; S.tornado=null; S.traps=[]; S.kraken=null; S.snake=null; S.evil=null;
   Game.camYaw=0;
   if(S.mode==='solo'){ seedPowerups(); }
   toast('ROUND '+S.round+'  //  GO', COLORS[S.colorIdx].css, 1100);
 }
 
 // input
+function eagleFire(){
+  var p=S.players[S.me]; if(!p||!p.alive||p.fx.eagle<=0) return;
+  var now=performance.now()/1000; if(now-(p._efT||0)<0.14) return; p._efT=now;
+  var d=DIRS[p.dir];
+  for(var i=1;i<=5;i++){ var fxp=p.x+d.x*i*8, fzp=p.z+d.z*i*8;
+    carveAll(fxp,fzp,6); addHole(fxp,fzp,6,2); Game.spawnBurst(fxp,fzp, i%2?0xff6a1a:0xffd24a); }
+  Music.sfx('rocket'); shake(0.3);
+}
 function inGun(){ var me=S.players[S.me]; return me && me.fx && me.fx.ac130>0; }
+function inEagle(){ var me=S.players[S.me]; return me && me.fx && me.fx.eagle>0; }
 window.addEventListener('keydown', function(e){
   if(e.repeat) return;
   if(inGun()){
@@ -1102,7 +1158,7 @@ window.addEventListener('keydown', function(e){
   }
   if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A') turn(-1);
   if(e.key==='ArrowRight'||e.key==='d'||e.key==='D') turn(1);
-  if(e.code==='Space'){ e.preventDefault(); doJump(S.players[S.me]); }
+  if(e.code==='Space'){ e.preventDefault(); if(inEagle()) eagleFire(); else doJump(S.players[S.me]); }
   if(e.key==='e'||e.key==='E') useItem();
 });
 var isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints>0;
@@ -1112,7 +1168,7 @@ bindTap('tRight', function(){ turn(1); });
 bindTap('tUse', function(){ useItem(); });
 // tap the middle of the screen to jump (tap again = double jump if you have it)
 (function(){ var z=el('tapzone'); if(!z) return; ['touchstart','mousedown'].forEach(function(ev){
-  z.addEventListener(ev,function(e){ e.preventDefault(); if(!inGun()) doJump(S.players[S.me]); },{passive:false}); }); })();
+  z.addEventListener(ev,function(e){ e.preventDefault(); if(inGun())return; if(inEagle()) eagleFire(); else doJump(S.players[S.me]); },{passive:false}); }); })();
 
 function enterGunship(){ var me=S.players[S.me]; S.aim={x:me.x,z:me.z}; S._lastGun=-999; document.body.classList.add('gun');
   el('irtxt').textContent='AC-130  //  STEER + FIRE'; toast('\uD83D\uDEE9\uFE0F AC-130 ONLINE','#ffe08a',1500); }
@@ -1141,7 +1197,7 @@ function turn(d){
   if(!S.running||S.over) return;
   var p=S.players[S.me]; if(!p||!p.alive) return;
   if(inGun()) return;
-  if(p.fx.stun>0) return;
+  if(p.fx.stun>0||p.fx.chicken>0) return;
   if(p.y>0.35 && !(p.upgrades&&p.upgrades.airturn) && !(p.fx.eagle>0) && !(p.fx.rocket>0)) return;
   if(p.fx.spin>0) d=-d;
   var now=performance.now()/1000;
@@ -1226,10 +1282,12 @@ function sizeFor(mode){
 // main flat (near spawn) -> 45deg-ish ramp -> lower platform.
 function groundHeight(x,z){
   if(S.map!=='gauntlet') return 0;
-  var HI=20, LO=-20, LOW=-38;
-  if(z>=HI) return 0;
-  if(z<=LO) return LOW;
-  return (HI-z)/(HI-LO)*LOW;
+  var base;
+  if(z>=40) base=0;                          // main flat (spawn side)
+  else if(z<=-40) base=-50;                  // lower platform
+  else base=(40-z)/80*-50;                   // ramp between (drivable both ways)
+  if(z<-70 && z>-150 && Math.abs(x)<60) base=-120;  // pit: fall in, cliff walls, can't climb out
+  return base;
 }
 function terrainY(x,z){ return groundHeight(x,z) - holeDisp(x,z); }
 // crater depth field: how far the ground bows down at (x,z)
@@ -1294,7 +1352,7 @@ function trailHitSelf(p){
   return false;
 }
 
-function isImmune(p){ return p.fx.ghost>0||p.y>1.2||p.fx.eagle>0||p.fx.kaiju>0||p.fx.rocket>0||p.fx.ac130>0; }
+function isImmune(p){ return p.fx.ghost>0||p.y>1.2||p.fx.eagle>0||p.fx.kaiju>0||p.fx.rocket>0||p.fx.ac130>0||p.fx.pacman>0; }
 function bendTrails(cx,cz,range){
   for(var id in S.players){ var p=S.players[id], ch=false;
     for(var i=1;i<p.pts.length;i++){ var pt=p.pts[i]; if(pt.brk) continue;
@@ -1328,15 +1386,67 @@ function stepHazards(dt){
       for(var id3 in S.players){ var pb=S.players[id3]; if(pb.alive && !isImmune(pb) && Math.hypot(pb.x-B.x,pb.z-B.z)<6.5) killOrShield(pb); }
     }
   }
+  // TORNADO — roams and hurls nearby wall points to new spots (doesn't delete them)
+  if(S.tornado){ var T=S.tornado; T.life-=dt; if(T.life<=0){ S.tornado=null; }
+    else { var ts=52; T.x+=T.dx*ts*dt; T.z+=T.dz*ts*dt;
+      if(Math.abs(T.x)>HALF-6){ T.dx*=-1; T.x=Math.max(-HALF+6,Math.min(HALF-6,T.x)); }
+      if(Math.abs(T.z)>HALF-6){ T.dz*=-1; T.z=Math.max(-HALF+6,Math.min(HALF-6,T.z)); }
+      T.throwT-=dt; if(T.throwT<=0){ T.throwT=0.25;
+        for(var tid in S.players){ var tp=S.players[tid], ch=false;
+          for(var i=1;i<tp.pts.length;i++){ var pt=tp.pts[i]; if(pt.brk) continue;
+            if(Math.hypot(pt.x-T.x,pt.z-T.z)<26){ pt.x=Math.max(-HALF,Math.min(HALF,pt.x+(rng()*2-1)*30)); pt.z=Math.max(-HALF,Math.min(HALF,pt.z+(rng()*2-1)*30)); ch=true; } }
+          if(ch) tp._builtPts=-1; }
+      }
+    }
+  }
+  // SHARK TRAPS — permanent; eat any non-immune bike that enters
+  for(var qi=0;qi<S.traps.length;qi++){ var tr=S.traps[qi]; if(tr.arm>0) tr.arm-=dt;
+    for(var sid in S.players){ var sp2=S.players[sid]; if(!sp2.alive||isImmune(sp2)) continue;
+      if(tr.arm>0 && sp2.id===tr.owner) continue;
+      if(Math.hypot(sp2.x-tr.x,sp2.z-tr.z)<4){ killOrShield(sp2); } }
+  }
+  // KRAKEN — placed; wrecks walls, hurls walls, or teleports a rider
+  if(S.kraken){ var K=S.kraken; K.life-=dt; if(K.life<=0){ S.kraken=null; }
+    else { K.actT-=dt; if(K.actT<=0){ K.actT=1.1; var act=Math.floor(rng()*3);
+      if(act===0){ var kx=K.x+(rng()*2-1)*40, kz=K.z+(rng()*2-1)*40; carveAll(kx,kz,9); addHole(kx,kz,9,3); Game.spawnBurst(kx,kz,0x7a5bff); }
+      else if(act===1){ bendTrails(K.x,K.z,50); for(var kid in S.players){ var kp=S.players[kid]; for(var i=1;i<kp.pts.length;i++){ var pt=kp.pts[i]; if(pt.brk)continue; if(Math.hypot(pt.x-K.x,pt.z-K.z)<50){ pt.x=Math.max(-HALF,Math.min(HALF,pt.x+(rng()*2-1)*40)); pt.z=Math.max(-HALF,Math.min(HALF,pt.z+(rng()*2-1)*40)); } } kp._builtPts=-1; } }
+      else { var kf=null,kb=1e9; for(var kf2 in S.players){ var ko=S.players[kf2]; if(!ko.alive)continue; var kd=Math.hypot(ko.x-K.x,ko.z-K.z); if(kd<kb){kb=kd;kf=ko;} } if(kf){ var fl=kf.pts[kf.pts.length-1]; if(fl&&Math.hypot(kf.x-fl.x,kf.z-fl.z)>0.6) kf.pts.push({x:kf.x,z:kf.z,mode:kf.sizeMode}); kf.x=Math.round((rng()*2-1)*(HALF-30)); kf.z=Math.round((rng()*2-1)*(HALF-30)); kf.pts.push({x:kf.x,z:kf.z,brk:true}); kf._builtPts=-1; kf.fx.stun=0.6; Game.spawnBurst(kf.x,kf.z,0x7a5bff); } }
+    } }
+  }
+  // TRAIL SNAKE — walls near the target slowly creep toward them
+  if(S.snake){ S.snake.life-=dt; if(S.snake.life<=0){ S.snake=null; }
+    else { var sfp=S.players[S.snake.foe]; if(sfp&&sfp.alive){
+      for(var nid in S.players){ var np=S.players[nid], nc=false;
+        for(var j=1;j<np.pts.length;j++){ var q=np.pts[j]; if(q.brk)continue; var dx=sfp.x-q.x,dz=sfp.z-q.z,dd=Math.hypot(dx,dz);
+          if(dd<70&&dd>3){ var f=6*dt; q.x+=dx/dd*f; q.z+=dz/dd*f; nc=true; } }
+        if(nc) np._builtPts=-1; }
+    } }
+  }
+  // EVIL CLONE — hostile look-alike homes in on the target
+  if(S.evil){ var E=S.evil; E.life-=dt; var et=S.players[E.target];
+    if(E.life<=0 || !et || !et.alive){ S.evil=null; }
+    else { var dx=et.x-E.x, dz=et.z-E.z, d=Math.hypot(dx,dz)||1; var esp=52;
+      E.x+=dx/d*esp*dt; E.z+=dz/d*esp*dt;
+      if(d<5 && !isImmune(et)){ killOrShield(et); S.evil=null; }
+    }
+  }
 }
 function stepPlayer(p, dt){
   if(!p.alive) return;
-  ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun']
+  ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun','chicken','pacman']
     .forEach(function(k){ if(p.fx[k]>0) p.fx[k]=Math.max(0,p.fx[k]-dt); });
   // lock wall size per-segment: when size mode changes, seal the current segment at its size
   var cmode = p.fx.tiny>0?'tiny':(p.fx.kaiju>0?'kaiju':'normal');
   if(p.sizeMode===undefined) p.sizeMode='normal';
   if(cmode!==p.sizeMode){ p.pts.push({x:p.x,z:p.z, mode:p.sizeMode}); p._builtPts=-1; p.sizeMode=cmode; }
+  // on sloped ground, seal segments as height changes so the wall stays where it was laid
+  if(S.map==='gauntlet'){ var gyn=groundHeight(p.x,p.z); if(Math.abs(gyn-(p.lastGY||0))>3){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode}); p._builtPts=-1; p.lastGY=gyn; } }
+  // CHICKEN: flail with random turns, no control
+  if(p.fx.chicken>0){ p.chkT=(p.chkT||0)-dt; if(p.chkT<=0){ p.chkT=0.18+Math.random()*0.3;
+    var cli=CW.indexOf(p.dir); p.pts.push({x:p.x,z:p.z,mode:p.sizeMode}); p.dir=CW[(cli+(Math.random()<0.5?1:3))%4]; } }
+  // PAC-MAN: chomp walls under you and eat any foe you touch
+  if(p.fx.pacman>0){ p.pacT=(p.pacT||0)-dt; if(p.pacT<=0){ p.pacT=0.12; carveAll(p.x,p.z,6); }
+    for(var eid in S.players){ var ep=S.players[eid]; if(ep.id!==p.id && ep.alive && !isImmune(ep) && Math.hypot(ep.x-p.x,ep.z-p.z)<6) killOrShield(ep); } }
 
   var spd = BASE_SPEED;
   if(p.fx.nitro>0 || p.fx.rocket>0) spd*=1.75;
@@ -1370,9 +1480,17 @@ function stepPlayer(p, dt){
   var d=DIRS[p.dir];
   p.x += d.x*p.speed*dt; p.z += d.z*p.speed*dt;
 
-  var immune = (p.fx.ghost>0 || p.y>1.2 || p.fx.eagle>0 || p.fx.kaiju>0 || p.fx.rocket>0 || p.fx.ac130>0);
+  var immune = (p.fx.ghost>0 || p.y>1.2 || p.fx.eagle>0 || p.fx.kaiju>0 || p.fx.rocket>0 || p.fx.ac130>0 || p.fx.pacman>0);
   if(!immune && (Math.abs(p.x)>HALF-2 || Math.abs(p.z)>HALF-2)){ return killOrShield(p); }
   p.x=Math.max(-HALF+1,Math.min(HALF-1,p.x)); p.z=Math.max(-HALF+1,Math.min(HALF-1,p.z));
+  // terrain following: gentle up/down = follow, big drop = fall, big rise = crash into cliff
+  if(S.map==='gauntlet'){
+    var tg=groundHeight(p.x,p.z); if(p.groundY===undefined) p.groundY=tg;
+    if(tg < p.groundY-0.6){ p.groundVy-=140*dt; p.groundY+=p.groundVy*dt; if(p.groundY<=tg){ p.groundY=tg; p.groundVy=0; } }
+    else { var climb=tg-p.groundY;
+      if(climb>7 && !immune && p.y<=0.2){ return killOrShield(p); }   // ran into a cliff face
+      p.groundY=tg; p.groundVy=0; }
+  } else { p.groundY=0; }
   if(!immune){
     if(trailHitSelf(p)){ return killOrShield(p); }
     if(obstacleHit(p.x,p.z)){ return killOrShield(p); }
@@ -1413,7 +1531,7 @@ function killOrShield(p){
   checkRoundEnd();
 }
 
-var HELD_TYPES={nitro:1,ghost:1,shield:1,wipe:1,cannon:1,tiny:1,ufo:1,bullet:1,rocket:1,eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1};   // stored; jump is the only instant/permanent one
+var HELD_TYPES={nitro:1,ghost:1,shield:1,wipe:1,cannon:1,tiny:1,ufo:1,bullet:1,rocket:1,eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,sharktrap:1,chicken:1,pacman:1,kraken:1,snake:1,evilclone:1};   // stored; jump is the only instant/permanent one
 function pickup(p,pu){
   if(pu.id){ S.consumed[pu.id]=true; p.consumedLocal[pu.id]=true; }
   var t=PU_TYPES[pu.type];
@@ -1456,6 +1574,16 @@ function applyEffect(p, type){
     case 'meteor': S.meteor=15; S.meteorT=0; if(p.id===S.me) toast('\u2604\uFE0F METEOR STRIKE','#ff7a3a',1400); break;
     case 'blackhole': S.bh={x:Math.round((rng()*2-1)*(HALF-34)),z:Math.round((rng()*2-1)*(HALF-34)),life:15}; if(p.id===S.me) toast('\uD83C\uDF00 BLACK HOLE','#9b5bff',1400); break;
     case 'boulder': { var ang=rng()*6.28; S.boulder={x:Math.round((rng()*2-1)*40),z:Math.round((rng()*2-1)*40),dx:Math.cos(ang),dz:Math.sin(ang),life:15,carveT:0}; if(p.id===S.me) toast('\uD83E\uDEA8 BOULDER','#b08a5a',1400); break; }
+    case 'tornado': { var ta=rng()*6.28; S.tornado={x:Math.round((rng()*2-1)*40),z:Math.round((rng()*2-1)*40),dx:Math.cos(ta),dz:Math.sin(ta),life:15,throwT:0}; if(p.id===S.me) toast('\uD83C\uDF2A\uFE0F TORNADO','#8ad0ff',1400); break; }
+    case 'sharktrap': { var d2=DIRS[p.dir]; S.traps.push({x:p.x-d2.x*8, z:p.z-d2.z*8, owner:p.id, arm:1.4}); if(p.id===S.me) toast('\uD83E\uDD88 SHARK TRAP SET','#5ad0d0',1200); break; }
+    case 'chicken': { var foe2=null,bd2=1e9; for(var cid in S.players){ var o2=S.players[cid]; if(o2.id===p.id||!o2.alive)continue; var dd2=Math.hypot(o2.x-p.x,o2.z-p.z); if(dd2<bd2){bd2=dd2;foe2=o2;} }
+      if(foe2){ foe2.fx.chicken=8; foe2.chkT=0; if(foe2.id===S.me) toast('\uD83D\uDC14 YOU ARE A CHICKEN','#ffe04a',1400); } break; }
+    case 'pacman': p.fx.pacman=10; p.pacT=0; if(p.id===S.me) toast('\uD83D\uDFE1 PAC-MAN!','#ffe83a',1400); break;
+    case 'kraken': S.kraken={x:Math.round(p.x),z:Math.round(p.z),life:15,actT:0}; if(p.id===S.me) toast('\uD83D\uDC19 KRAKEN RELEASED','#7a5bff',1400); break;
+    case 'snake': { var sf3=null,sb3=1e9; for(var s3 in S.players){ var o3=S.players[s3]; if(o3.id===p.id||!o3.alive)continue; var d3=Math.hypot(o3.x-p.x,o3.z-p.z); if(d3<sb3){sb3=d3;sf3=o3;} }
+      if(sf3){ S.snake={foe:sf3.id, life:12}; if(sf3.id===S.me) toast('\uD83D\uDC0D TRAIL SNAKE','#5aff9a',1400); } break; }
+    case 'evilclone': { var ef=null,eb=1e9; for(var e3 in S.players){ var oe=S.players[e3]; if(oe.id===p.id||!oe.alive)continue; var de=Math.hypot(oe.x-p.x,oe.z-p.z); if(de<eb){eb=de;ef=oe;} }
+      if(ef){ S.evil={x:ef.x, z:ef.z-30, dir:'S', life:12, target:ef.id, color:ef.color}; if(ef.id===S.me) toast('\uD83D\uDC7F EVIL CLONE HUNTS YOU','#ff4a4a',1500); } break; }
     case 'ufo': {
       var foe=null,bd=1e9;
       for(var id in S.players){ var o=S.players[id]; if(o.id===p.id||!o.alive)continue;
@@ -1539,7 +1667,7 @@ function freeDist(x,z,dir,maxD){
 }
 
 function aiThink(p, dt){
-  if(!p.alive) return;
+  if(!p.alive || p.fx.chicken>0) return;
   var D=(S.test?DIFFS.chill:(DIFFS[S.diff]||DIFFS.normal));
   p.aiReact=(p.aiReact||0)-dt;
   p.aiStraight=(p.aiStraight||0)+dt;
@@ -1655,7 +1783,8 @@ function loop(t){
     var rx = (pp!==S.players[S.me] && !pp.isAI && pp.rx!==undefined)?pp.rx:pp.x;
     var rz = (pp!==S.players[S.me] && !pp.isAI && pp.rz!==undefined)?pp.rz:pp.z;
     pp.mesh.visible = pp.alive && pp.fx.eagle<=0;
-    pp.mesh.position.set(rx, terrainY(rx,rz) + (pp.y||0), rz);
+    var gy = (pp===S.players[S.me]||pp.isAI) ? (pp.groundY||0) : groundHeight(rx,rz);
+    pp.mesh.position.set(rx, gy - holeDisp(rx,rz) + (pp.y||0), rz);
     pp.mesh.rotation.y = Math.atan2(DIRS[pp.dir].x, DIRS[pp.dir].z);
     var sc = pp.fx.kaiju>0?3.6 : (pp.fx.tiny>0?0.3:1);
     pp.mesh.scale.set(sc,sc,sc);

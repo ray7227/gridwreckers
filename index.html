@@ -127,7 +127,7 @@
     color:#fff;background:rgba(255,60,40,.35);border:2px solid rgba(255,90,60,.8);box-shadow:0 0 20px rgba(255,60,40,.4)}
   #gunFire:active{background:rgba(255,60,40,.6)}
 
-  #round{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  #round{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:20;
     flex-direction:column;gap:8px;background:rgba(3,4,10,.6);text-align:center;padding:20px}
   #round.show{display:flex}
   #round .big{font-size:clamp(30px,7vw,60px);font-weight:900;transform:skewX(-7deg)}
@@ -255,7 +255,7 @@ var HALF = ARENA/2;
 var BASE_SPEED = 46;
 var WALL_H = 6.2;
 var HIT_R = 1.7;
-var TURN_COOLDOWN = 0.09;
+var TURN_COOLDOWN = 0.05;
 var DIRS = { N:{x:0,z:-1}, E:{x:1,z:0}, S:{x:0,z:1}, W:{x:-1,z:0} };
 var CW = ['N','E','S','W'];
 
@@ -396,21 +396,26 @@ function buildMap(){
 }
 function grabName(){ var v=el('nameIn').value.trim(); S.name = v || ('Rider'+Math.floor(Math.random()*90+10)); }
 
-el('soloBtn').onclick = function(){ grabName(); startMusic(); startSolo(); };
-el('testBtn').onclick = function(){ grabName(); startMusic(); startTest(); };
-el('createBtn').onclick = function(){ grabName(); startMusic(); createRoom(); };
+el('soloBtn').onclick = function(){ grabName(); newMatchMusic(); startSolo(); };
+el('testBtn').onclick = function(){ grabName(); startTest(); };
+el('createBtn').onclick = function(){ grabName(); newMatchMusic(); createRoom(); };
 el('joinBtn').onclick = function(){ grabName(); var c=el('joinIn').value.trim().toUpperCase(); if(c.length<3){ el('menuErr').textContent='Enter a room code.'; return;} joinRoom(c); };
 el('leaveBtn').onclick = function(){ Net.stop(); location.reload(); };
 el('startBtn').onclick = function(){ if(S.host) Net.startRace(); };
-el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3||(S.scores[2]||0)>=3) S.scores={1:0,2:0}; resetRound(true);} else if(S.host){ Net.startRace(); } };
-// background music = YOUR music.mp3 (created fresh like the SFX; pauses for eagle/AC-130 audio)
+el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3||(S.scores[2]||0)>=3){ S.scores={1:0,2:0}; newMatchMusic(); } resetRound(true);} else if(S.host){ Net.startRace(); } };
+// background music = a random song from the Songs/ folder, chosen per MATCH
+var SONGS=['Songs/Paradisco.mp3','Songs/Hey%20Baby.mp3','Songs/Wizards.mp3'];
 var bgAudio=null, musicOn=true;
-var songName='music.mp3';
-try{ var q=new URLSearchParams(location.search).get('song'); if(q) songName=q; }catch(e){}
-function ensureBg(){ if(bgAudio) return; try{ bgAudio=new Audio(songName+'?cb='+Date.now()); bgAudio.loop=true; bgAudio.preload='auto'; bgAudio.volume=0.7; }catch(e){ bgAudio=null; } }
 function setMuteLabel(){ el('mute').innerHTML = musicOn ? '\u266B music' : '\u266A muted'; }
-function startMusic(){ ensureBg(); if(bgAudio && musicOn){ bgAudio.play().catch(function(){}); } }
-function tryUnlock(){ startMusic(); }
+function newMatchMusic(){ S._matchIdx = Math.floor(Math.random()*SONGS.length); S._matchStarted=false; }
+function startMatchMusic(idx){
+  try{ if(bgAudio) bgAudio.pause(); }catch(e){}
+  if(idx===undefined || idx===null) idx=Math.floor(Math.random()*SONGS.length);
+  S._matchIdx=idx;
+  try{ bgAudio=new Audio(SONGS[idx]); bgAudio.loop=true; bgAudio.volume=0.7; if(musicOn) bgAudio.play().catch(function(){}); }catch(e){ bgAudio=null; }
+}
+function ensureMatchMusic(){ if(S.test) return; if(!S._matchStarted){ startMatchMusic(S._matchIdx); S._matchStarted=true; } }
+function tryUnlock(){ if(bgAudio && musicOn && bgAudio.paused && !musicShouldDuck()){ bgAudio.play().catch(function(){}); } }
 function musicShouldDuck(){
   if(eagleSongOn) return true;
   for(var id in S.players){ if(S.players[id].fx && S.players[id].fx.ac130>0) return true; }
@@ -426,7 +431,7 @@ document.addEventListener('keydown', tryUnlock);
 el('mute').onclick = function(){
   musicOn=!musicOn;
   if(bgAudio) bgAudio.muted=!musicOn;
-  if(musicOn) startMusic();
+  if(musicOn) tryUnlock();
   setMuteLabel();
 };
 
@@ -646,11 +651,37 @@ var Game = {
     var d=new THREE.DirectionalLight(0xcfe6ff, 1.1); d.position.set(60,160,40); sc.add(d);
 
     // gradient sky dome
-    var sky=new THREE.Mesh(new THREE.SphereGeometry(900,24,16),
+    var sky=new THREE.Mesh(new THREE.SphereGeometry(900,32,20),
       new THREE.ShaderMaterial({ side:THREE.BackSide, uniforms:{},
         vertexShader:'varying vec3 vp; void main(){ vp=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-        fragmentShader:'varying vec3 vp; void main(){ float h=clamp((normalize(vp).y+0.25)*0.9,0.0,1.0); vec3 top=vec3(0.03,0.02,0.10); vec3 mid=vec3(0.20,0.03,0.28); vec3 bot=vec3(0.02,0.10,0.22); vec3 c=mix(bot,mid,smoothstep(0.0,0.5,h)); c=mix(c,top,smoothstep(0.4,1.0,h)); gl_FragColor=vec4(c,1.0);}' }));
+        fragmentShader:[
+          'varying vec3 vp;',
+          'void main(){',
+          '  vec3 dir=normalize(vp);',
+          '  float h=clamp((dir.y+0.25)*0.9,0.0,1.0);',
+          '  vec3 top=vec3(0.02,0.01,0.09), mid=vec3(0.16,0.02,0.26), bot=vec3(0.03,0.05,0.20);',
+          '  vec3 c=mix(bot,mid,smoothstep(0.0,0.5,h)); c=mix(c,top,smoothstep(0.4,1.0,h));',
+          '  vec3 sd=normalize(vec3(0.0,0.16,-1.0));',
+          '  float sa=dot(dir,sd);',
+          '  float sun=smoothstep(0.978,0.995,sa);',
+          '  float bands=step(0.45, fract(dir.y*55.0));',
+          '  vec3 sunCol=mix(vec3(1.0,0.4,0.72), vec3(1.0,0.82,0.35), clamp(dir.y*3.5,0.0,1.0));',
+          '  c=mix(c,sunCol,sun*(0.35+0.65*bands));',
+          '  c+=sunCol*smoothstep(0.9,0.99,sa)*0.35;',
+          '  c+=vec3(0.55,0.12,0.45)*pow(1.0-abs(dir.y),9.0)*0.5;',
+          '  gl_FragColor=vec4(c,1.0);',
+          '}'
+        ].join('\n') }));
     sc.add(sky);
+    // distant city skyline + mountains for the synthwave vibe
+    (function(){
+      for(var i=0;i<90;i++){ var an=i/90*6.28, r=HALF+30+Math.random()*40, bw=6+Math.random()*11, bh=18+Math.random()*80;
+        var b=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bw), new THREE.MeshBasicMaterial({color:0x0a0620}));
+        b.position.set(Math.cos(an)*r, bh/2-6, Math.sin(an)*r); sc.add(b); }
+      for(var m=0;m<12;m++){ var mn=m/12*6.28, mr=HALF+150, mh=70+Math.random()*90;
+        var mt=new THREE.Mesh(new THREE.ConeGeometry(70+Math.random()*50, mh, 4), new THREE.MeshBasicMaterial({color:0x140b28}));
+        mt.position.set(Math.cos(mn)*mr, mh/2-10, Math.sin(mn)*mr); mt.rotation.y=Math.random()*3; sc.add(mt); }
+    })();
 
     // deformable neon-grid arena floor (bows into craters)
     var GSEG=120;
@@ -1016,25 +1047,6 @@ var Game = {
       tm.visible=false; this.scene.add(tm); this.tornadoMesh=tm; }
     this.tornadoMesh.visible=!!S.tornado;
     if(S.tornado){ this.tornadoMesh.position.set(S.tornado.x, groundHeight(S.tornado.x,S.tornado.z)+17, S.tornado.z); this.tornadoMesh.rotation.y+=0.4; }
-    // shark traps (pool)
-    this.trapMeshes=this.trapMeshes||[];
-    while(this.trapMeshes.length < S.traps.length){
-      var fg=new THREE.Group();
-      var fin=new THREE.Mesh(new THREE.ConeGeometry(1.6,4,4), new THREE.MeshStandardMaterial({color:0x9fd0d0, emissive:0x2a5555, emissiveIntensity:.4}));
-      fin.rotation.y=Math.PI/4; fin.position.y=2; fg.add(fin);
-      this.scene.add(fg); this.trapMeshes.push(fg);
-    }
-    for(var ti=0;ti<this.trapMeshes.length;ti++){ var vis=ti<S.traps.length; this.trapMeshes[ti].visible=vis;
-      if(vis){ var tr=S.traps[ti]; this.trapMeshes[ti].position.set(tr.x, groundHeight(tr.x,tr.z), tr.z); } }
-    // kraken blob
-    if(!this.krakenMesh){ var kg=new THREE.Group();
-      var body=new THREE.Mesh(new THREE.SphereGeometry(6,16,12), new THREE.MeshStandardMaterial({color:0x2a1a55, emissive:0x7a5bff, emissiveIntensity:.4}));
-      kg.add(body);
-      for(var a=0;a<8;a++){ var tent=new THREE.Mesh(new THREE.ConeGeometry(0.9,10,6), new THREE.MeshStandardMaterial({color:0x3a2a66, emissive:0x5a3bff, emissiveIntensity:.3}));
-        var an=a/8*6.28; tent.position.set(Math.cos(an)*5,-4,Math.sin(an)*5); tent.rotation.x=Math.PI; tent.rotation.z=Math.cos(an)*0.4; kg.add(tent); }
-      kg.visible=false; this.scene.add(kg); this.krakenMesh=kg; }
-    this.krakenMesh.visible=!!S.kraken;
-    if(S.kraken){ this.krakenMesh.position.set(S.kraken.x, groundHeight(S.kraken.x,S.kraken.z)+6, S.kraken.z); this.krakenMesh.rotation.y+=0.03; }
     // evil clone
     if(S.evil){ if(!this.evilMesh){ this.evilMesh=this.bikeMesh(0xff3030); this.scene.add(this.evilMesh); }
       this.evilMesh.visible=true; this.evilMesh.position.set(S.evil.x, groundHeight(S.evil.x,S.evil.z), S.evil.z);
@@ -1084,7 +1096,7 @@ function beginGame(){
   buildMap(); Game.buildObstacles();
   if(isTouch) document.body.classList.add('touch');
   if(S.mode==='online') Net.beginSend();
-  startMusic();
+  ensureMatchMusic();
   resetRound(false);
   loop(performance.now());
 }
@@ -1220,14 +1232,19 @@ function turn(d){
   var p=S.players[S.me]; if(!p||!p.alive) return;
   if(inGun()) return;
   if(p.fx.stun>0) return;
+  p.turnBuf = d;                       // remember the latest tap; applied as soon as cooldown allows
+  applyTurn(p);
+}
+function applyTurn(p){
+  if(p.turnBuf===undefined || p.turnBuf===null) return;
   if(p.y>0.35 && !(p.upgrades&&p.upgrades.airturn) && !(p.fx.eagle>0) && !(p.fx.rocket>0)) return;
-  if(p.fx.spin>0) d=-d;
-  if(p.fx.reverse>0) d=-d;            // reverse world
   var now=performance.now()/1000;
   if(now - p.lastTurn < TURN_COOLDOWN) return;
+  var d=p.turnBuf; p.turnBuf=null;
+  if(p.fx.reverse>0) d=-d;             // reverse world
   p.lastTurn=now;
   var idx=CW.indexOf(p.dir); idx=(idx+(d>0?1:3))%4;
-  p.pts.push({x:p.x,z:p.z, mode:p.sizeMode||'normal'});
+  p.pts.push({x:p.x,z:p.z, mode:p.sizeMode||'normal', wy:p.y||0});
   p.dir=CW[idx];
 }
 
@@ -1459,6 +1476,8 @@ function stepHazards(dt){
     else { var ts=52; T.x+=T.dx*ts*dt; T.z+=T.dz*ts*dt;
       if(Math.abs(T.x)>HALF-6){ T.dx*=-1; T.x=Math.max(-HALF+6,Math.min(HALF-6,T.x)); }
       if(Math.abs(T.z)>HALF-6){ T.dz*=-1; T.z=Math.max(-HALF+6,Math.min(HALF-6,T.z)); }
+      for(var pid in S.players){ var pl=S.players[pid]; if(!pl.alive) continue; var dx=T.x-pl.x, dz=T.z-pl.z, d=Math.hypot(dx,dz)||1;
+        if(d<55){ var f=(1-d/55)*20*dt; pl.x+=dx/d*f; pl.z+=dz/d*f; } }   // gentle suction
       T.throwT-=dt; if(T.throwT<=0){ T.throwT=0.25;
         for(var tid in S.players){ var tp=S.players[tid], ch=false;
           for(var i=1;i<tp.pts.length;i++){ var pt=tp.pts[i]; if(pt.brk) continue;
@@ -1466,29 +1485,6 @@ function stepHazards(dt){
           if(ch) tp._builtPts=-1; }
       }
     }
-  }
-  // SHARK TRAPS — permanent; eat any non-immune bike that enters
-  for(var qi=0;qi<S.traps.length;qi++){ var tr=S.traps[qi]; if(tr.arm>0) tr.arm-=dt;
-    for(var sid in S.players){ var sp2=S.players[sid]; if(!sp2.alive||isImmune(sp2)) continue;
-      if(tr.arm>0 && sp2.id===tr.owner) continue;
-      if(Math.hypot(sp2.x-tr.x,sp2.z-tr.z)<4){ killOrShield(sp2); } }
-  }
-  // KRAKEN — placed; wrecks walls, hurls walls, or teleports a rider
-  if(S.kraken){ var K=S.kraken; K.life-=dt; if(K.life<=0){ S.kraken=null; }
-    else { K.actT-=dt; if(K.actT<=0){ K.actT=1.1; var act=Math.floor(rng()*3);
-      if(act===0){ var kx=K.x+(rng()*2-1)*40, kz=K.z+(rng()*2-1)*40; carveAll(kx,kz,9); addHole(kx,kz,9,3); Game.spawnBurst(kx,kz,0x7a5bff); }
-      else if(act===1){ bendTrails(K.x,K.z,50); for(var kid in S.players){ var kp=S.players[kid]; for(var i=1;i<kp.pts.length;i++){ var pt=kp.pts[i]; if(pt.brk)continue; if(Math.hypot(pt.x-K.x,pt.z-K.z)<50){ pt.x=Math.max(-HALF,Math.min(HALF,pt.x+(rng()*2-1)*40)); pt.z=Math.max(-HALF,Math.min(HALF,pt.z+(rng()*2-1)*40)); } } kp._builtPts=-1; } }
-      else { var kf=null,kb=1e9; for(var kf2 in S.players){ var ko=S.players[kf2]; if(!ko.alive)continue; var kd=Math.hypot(ko.x-K.x,ko.z-K.z); if(kd<kb){kb=kd;kf=ko;} } if(kf){ var fl=kf.pts[kf.pts.length-1]; if(fl&&Math.hypot(kf.x-fl.x,kf.z-fl.z)>0.6) kf.pts.push({x:kf.x,z:kf.z,mode:kf.sizeMode}); kf.x=Math.round((rng()*2-1)*(HALF-30)); kf.z=Math.round((rng()*2-1)*(HALF-30)); kf.pts.push({x:kf.x,z:kf.z,brk:true}); kf._builtPts=-1; kf.fx.stun=0.6; Game.spawnBurst(kf.x,kf.z,0x7a5bff); } }
-    } }
-  }
-  // TRAIL SNAKE — walls near the target slowly creep toward them
-  if(S.snake){ S.snake.life-=dt; if(S.snake.life<=0){ S.snake=null; }
-    else { var sfp=S.players[S.snake.foe]; if(sfp&&sfp.alive){
-      for(var nid in S.players){ var np=S.players[nid], nc=false;
-        for(var j=1;j<np.pts.length;j++){ var q=np.pts[j]; if(q.brk)continue; var dx=sfp.x-q.x,dz=sfp.z-q.z,dd=Math.hypot(dx,dz);
-          if(dd<70&&dd>3){ var f=6*dt; q.x+=dx/dd*f; q.z+=dz/dd*f; nc=true; } }
-        if(nc) np._builtPts=-1; }
-    } }
   }
   // EVIL CLONE — hostile look-alike homes in on the target
   if(S.evil){ var E=S.evil; E.life-=dt; var et=S.players[E.target];
@@ -1501,6 +1497,7 @@ function stepHazards(dt){
 }
 function stepPlayer(p, dt){
   if(!p.alive) return;
+  if(p.id===S.me && !p.isAI) applyTurn(p);   // flush buffered turn as soon as cooldown allows
   ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun','pacman','reverse','quake','fog','faketr','clone']
     .forEach(function(k){ if(p.fx[k]>0) p.fx[k]=Math.max(0,p.fx[k]-dt); });
   // lock wall size per-segment: when size mode changes, seal the current segment at its size
@@ -1509,11 +1506,8 @@ function stepPlayer(p, dt){
   if(cmode!==p.sizeMode){ p.pts.push({x:p.x,z:p.z, mode:p.sizeMode, wy:p.y||0}); p._builtPts=-1; p.sizeMode=cmode; }
   // on sloped ground, seal segments as height changes so the wall stays where it was laid
   if(S.map==='gauntlet'){ var gyn=groundHeight(p.x,p.z); if(Math.abs(gyn-(p.lastGY||0))>3){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:p.y||0}); p._builtPts=-1; p.lastGY=gyn; } }
-  // CHICKEN: flail with random turns, no control
-  if(p.fx.chicken>0){ p.chkT=(p.chkT||0)-dt; if(p.chkT<=0){ p.chkT=0.18+Math.random()*0.3;
-    var cli=CW.indexOf(p.dir); p.pts.push({x:p.x,z:p.z,mode:p.sizeMode}); p.dir=CW[(cli+(Math.random()<0.5?1:3))%4]; } }
-  // PAC-MAN: chomp walls under you and eat any foe you touch
-  if(p.fx.pacman>0){ p.pacT=(p.pacT||0)-dt; if(p.pacT<=0){ p.pacT=0.12; carveAll(p.x,p.z,6); }
+  // PAC-MAN: continuously chomp walls under you and eat any foe you touch
+  if(p.fx.pacman>0){ carveAll(p.x,p.z,7);
     for(var eid in S.players){ var ep=S.players[eid]; if(ep.id!==p.id && ep.alive && !isImmune(ep) && Math.hypot(ep.x-p.x,ep.z-p.z)<6) killOrShield(ep); } }
 
   var spd = BASE_SPEED;

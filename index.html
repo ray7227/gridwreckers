@@ -260,11 +260,11 @@ var COLORS = [
   {name:'lime',   hex:0xb6ff2b, css:'#b6ff2b'},
   {name:'orange', hex:0xff8a1e, css:'#ff8a1e'}
 ];
-var ARENA = 320;
+var ARENA = 640;
 var HALF = ARENA/2;
 var BASE_SPEED = 46;
 var WALL_H = 6.2;
-var HIT_R = 1.7;
+var HIT_R = 1.0;
 var TURN_COOLDOWN = 0.05;
 var DIRS = { N:{x:0,z:-1}, E:{x:1,z:0}, S:{x:0,z:1}, W:{x:-1,z:0} };
 var CW = ['N','E','S','W'];
@@ -330,7 +330,8 @@ var S = {
   diff:'normal',
   map:'classic',
   obstacles:[],
-  events:{}, wind:null, tilt:null, shrink:0, speedMul:1, fpv:false
+  events:{}, wind:null, tilt:null, shrink:0, speedMul:1, fpv:false,
+  laser:null, eventWalls:[], portals:[]
 };
 
 function rng(){ S.seed = (S.seed*1103515245 + 12345) & 0x7fffffff; return S.seed/0x7fffffff; }
@@ -342,7 +343,7 @@ function newPlayer(id, color, name){
     pts:[{x:0,z:0}],
     alive:true, score:0,
     speed:BASE_SPEED,
-    fx:{ nitro:0, ghost:0, jump:0, shield:0, eagle:0, kaiju:0, tiny:0, banana:0, bullet:0, rocket:0, spin:0, stun:0, pacman:0, reverse:0, quake:0, fog:0, faketr:0, clone:0 },
+    fx:{ nitro:0, ghost:0, jump:0, shield:0, eagle:0, kaiju:0, tiny:0, banana:0, bullet:0, rocket:0, spin:0, stun:0, pacman:0, reverse:0, quake:0, fog:0, faketr:0, clone:0, evilclone:0 },
     bananaT:0,
     hasShield:false,
     upgrades:{jump:false,airturn:false,doublejump:false,cannon:false},
@@ -418,14 +419,14 @@ el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3|
 var SONGS=['Songs/Paradisco.mp3','Songs/Hey%20Baby.mp3','Songs/Wizards.mp3'];
 var bgAudio=null, musicOn=true;
 function setMuteLabel(){ el('mute').innerHTML = musicOn ? '\u266B music' : '\u266A muted'; }
-function newMatchMusic(){ S._matchIdx = Math.floor(Math.random()*SONGS.length); S._matchStarted=false; }
+function newMatchMusic(){ S._matchIdx = Math.floor(Math.random()*SONGS.length); S._matchStarted=false; clearEvents(); }
 function startMatchMusic(idx){
   try{ if(bgAudio) bgAudio.pause(); }catch(e){}
   if(idx===undefined || idx===null) idx=Math.floor(Math.random()*SONGS.length);
   S._matchIdx=idx;
   try{ bgAudio=new Audio(SONGS[idx]); bgAudio.loop=true; bgAudio.volume=0.7; if(musicOn) bgAudio.play().catch(function(){}); }catch(e){ bgAudio=null; }
 }
-function ensureMatchMusic(){ if(S.test) return; if(!S._matchStarted){ startMatchMusic(S._matchIdx); S._matchStarted=true; } }
+function ensureMatchMusic(){ if(S.test){ S._wantMusic=false; return; } if(!S._matchStarted){ startMatchMusic(S._matchIdx); S._matchStarted=true; } S._wantMusic=true; }
 function tryUnlock(){ if(bgAudio && musicOn && bgAudio.paused && !musicShouldDuck()){ bgAudio.play().catch(function(){}); } }
 function musicShouldDuck(){
   if(eagleSongOn) return true;
@@ -433,9 +434,10 @@ function musicShouldDuck(){
   return false;
 }
 function updateMusic(){
-  if(!bgAudio || !musicOn) return;
-  if(musicShouldDuck()){ if(!bgAudio.paused) bgAudio.pause(); }
-  else { if(bgAudio.paused) bgAudio.play().catch(function(){}); }
+  if(!musicOn || !S._wantMusic) return;
+  if(musicShouldDuck()){ if(bgAudio && !bgAudio.paused) bgAudio.pause(); return; }
+  if(!bgAudio){ startMatchMusic(S._matchIdx); return; }
+  if(bgAudio.paused) bgAudio.play().catch(function(){});
 }
 document.addEventListener('pointerdown', tryUnlock);
 document.addEventListener('keydown', tryUnlock);
@@ -637,7 +639,7 @@ function buildLab(){
   }
   label('EARLY 0-1min:'); ['cannon','jump','wipe','shield','ghost','nitro','disco'].forEach(chip);
   label('LATE 1min+:'); ['ufo','bullet','rocket','tiny','airturn','doublejump'].forEach(chip);
-  label('RARE 45s+ (20%):'); ['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone'].forEach(chip);
+  label('RARE 45s+ (20%):'); ['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone','evilclone'].forEach(chip);
   var reset=document.createElement('div'); reset.className='tt'; reset.textContent='\u21BB RESET';
   reset.onclick=function(){ resetRound(false); }; strip.appendChild(reset);
   label('EVENTS:');
@@ -1077,11 +1079,14 @@ var Game = {
       tm.visible=false; this.scene.add(tm); this.tornadoMesh=tm; }
     this.tornadoMesh.visible=!!S.tornado;
     if(S.tornado){ this.tornadoMesh.position.set(S.tornado.x, groundHeight(S.tornado.x,S.tornado.z)+17, S.tornado.z); this.tornadoMesh.rotation.y+=0.4; }
-    // evil clone
-    if(S.evil){ if(!this.evilMesh){ this.evilMesh=this.bikeMesh(0xff3030); this.scene.add(this.evilMesh); }
-      this.evilMesh.visible=true; this.evilMesh.position.set(S.evil.x, groundHeight(S.evil.x,S.evil.z), S.evil.z);
-      var et=S.players[S.evil.target]; if(et){ this.evilMesh.rotation.y=Math.atan2(et.x-S.evil.x, et.z-S.evil.z); }
-    } else if(this.evilMesh){ this.evilMesh.visible=false; }
+    // evil clone (target's colour), one per affected rider
+    for(var ecid2 in S.players){ var tp2=S.players[ecid2];
+      if(tp2.fx && tp2.fx.evilclone>0 && tp2._evilX!==undefined){
+        if(!tp2.evilMesh){ tp2.evilMesh=this.bikeMesh(tp2.color); this.scene.add(tp2.evilMesh); }
+        tp2.evilMesh.visible=true; tp2.evilMesh.position.set(tp2._evilX, groundHeight(tp2._evilX,tp2._evilZ), tp2._evilZ);
+        tp2.evilMesh.rotation.y=Math.atan2(tp2.x-tp2._evilX, tp2.z-tp2._evilZ);
+      } else if(tp2.evilMesh){ tp2.evilMesh.visible=false; }
+    }
     // pac-man mouths
     for(var pid in S.players){ var pp=S.players[pid];
       if(pp.fx && pp.fx.pacman>0){ if(!pp.pacMesh){ pp.pacMesh=new THREE.Mesh(new THREE.SphereGeometry(5,20,16), new THREE.MeshBasicMaterial({color:0xffe83a})); this.scene.add(pp.pacMesh); }
@@ -1102,7 +1107,7 @@ var Game = {
   },
   buildObstacles:function(){
     if(!this.scene) return;
-    var key=S.map+':'+S.obstacles.length+':'+S.blastHoles.length;
+    var key=S.map+':'+S.obstacles.length+':'+S.blastHoles.length+':'+S.eventWalls.length;
     if(this._obKey===key) return; this._obKey=key;
     if(!this.obGroup){ this.obGroup=new THREE.Group(); this.scene.add(this.obGroup); }
     if(!this.obMat){ this.obMat=new THREE.MeshBasicMaterial({color:0xff3ad0, transparent:true, opacity:0.85});
@@ -1110,6 +1115,30 @@ var Game = {
     this.clearGroup(this.obGroup);
     for(var i=0;i<S.obstacles.length;i++){ var s=S.obstacles[i]; var parts=clipSeg(s[0],s[1],S.blastHoles);
       for(var k=0;k<parts.length;k++){ var mm=this.obSeg(parts[k][0],parts[k][1]); if(mm) this.obGroup.add(mm); } }
+    for(var e=0;e<S.eventWalls.length;e++){ var w=S.eventWalls[e]; var wm=this.obSeg(w[0],w[1]); if(wm) this.obGroup.add(wm); }
+  },
+  renderEvents:function(dt){
+    if(!this.scene) return;
+    // laser sweep
+    if(!this.laserMesh){ this.laserMesh=new THREE.Mesh(new THREE.BoxGeometry(2.5,40,ARENA),
+      new THREE.MeshBasicMaterial({color:0xff2b4a, transparent:true, opacity:0.5, fog:false})); this.laserMesh.visible=false; this.scene.add(this.laserMesh); }
+    this.laserMesh.visible=!!S.laser; if(S.laser){ this.laserMesh.position.set(S.laser.x,18,0); this.laserMesh.material.opacity=0.4+Math.abs(Math.sin(performance.now()/120))*0.4; }
+    // portals
+    this.portalMeshes=this.portalMeshes||[]; var need=S.portals.length*2;
+    while(this.portalMeshes.length<need){ var r=new THREE.Mesh(new THREE.TorusGeometry(5,0.9,10,26), new THREE.MeshBasicMaterial({color:0x9b5bff, transparent:true, opacity:0.85, fog:false})); r.rotation.x=Math.PI/2; this.scene.add(r); this.portalMeshes.push(r); }
+    for(var i=0;i<this.portalMeshes.length;i++){ var vis=i<need; this.portalMeshes[i].visible=vis;
+      if(vis){ var pr=S.portals[Math.floor(i/2)]; var ax=(i%2===0)?pr.ax:pr.bx, az=(i%2===0)?pr.az:pr.bz; this.portalMeshes[i].position.set(ax, groundHeight(ax,az)+3, az); this.portalMeshes[i].rotation.z+=0.08; } }
+    // sudden-death shrinking wall
+    if(!this.sdMesh){ this.sdMesh=new THREE.Mesh(new THREE.BoxGeometry(1,14,1), new THREE.MeshBasicMaterial({color:0xff3a3a})); this.sdMesh.visible=false; }
+    if((S.shrink||0)>1){ if(!this.sdGroup){ this.sdGroup=new THREE.Group(); this.scene.add(this.sdGroup);
+        var mat=new THREE.MeshBasicMaterial({color:0xff3a3a, transparent:true, opacity:0.7});
+        this.sdWalls=[]; for(var w=0;w<4;w++){ var wm2=new THREE.Mesh(new THREE.BoxGeometry(1,14,1), mat); this.sdGroup.add(wm2); this.sdWalls.push(wm2); } }
+      this.sdGroup.visible=true; var b=HALF-S.shrink;
+      this.sdWalls[0].scale.set(b*2,1,1); this.sdWalls[0].position.set(0,7,-b);
+      this.sdWalls[1].scale.set(b*2,1,1); this.sdWalls[1].position.set(0,7,b);
+      this.sdWalls[2].scale.set(1,1,b*2); this.sdWalls[2].position.set(-b,7,0);
+      this.sdWalls[3].scale.set(1,1,b*2); this.sdWalls[3].position.set(b,7,0);
+    } else if(this.sdGroup){ this.sdGroup.visible=false; }
   }
 };
 
@@ -1146,27 +1175,27 @@ function chaosLevel(){ return Math.min(1,S.roundTime/95); }
 
 var REG_EARLY=['cannon','jump','wipe','shield','ghost','nitro','disco'];
 var REG_LATE =['cannon','jump','wipe','shield','ghost','nitro','disco','ufo','bullet','rocket','tiny','airturn','doublejump'];
-var LEGEND3  =['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone'];
+var LEGEND3  =['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone','evilclone'];
 var LEGEND3_SET={eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,pacman:1,evilclone:1,reverse:1,quake:1,fog:1,faketr:1,clone:1};
 
 function spawnPU(forced){
   var t=forced || REG_EARLY[Math.floor(rng()*REG_EARLY.length)];
   var x=(rng()*2-1)*(HALF-24), z=(rng()*2-1)*(HALF-24);
   S.powerups.push({id:'pu'+Math.floor(rng()*1e6)+'_'+Date.now()%9999, x:Math.round(x), z:Math.round(z), type:t});
-  while(S.powerups.length>6) S.powerups.shift();
+  while(S.powerups.length>8) S.powerups.shift();
 }
 function mapCount(pred){ var c=0; for(var i=0;i<S.powerups.length;i++){ var p=S.powerups[i]; if(!S.consumed[p.id] && pred(p)) c++; } return c; }
 function spawnRefill(){
-  var pool = S.roundTime<60 ? REG_EARLY : REG_LATE;
+  var pool = S.roundTime<30 ? REG_EARLY : REG_LATE;
   var regN = mapCount(function(p){ return !LEGEND3_SET[p.type]; });
-  while(regN<2){ spawnPU(pool[Math.floor(rng()*pool.length)]); regN++; }        // refill the 2 slots
-  if(S.roundTime>=60){
+  while(regN<4){ spawnPU(pool[Math.floor(rng()*pool.length)]); regN++; }        // keep 4 on the map
+  if(S.roundTime>=30){
     var legN = mapCount(function(p){ return LEGEND3_SET[p.type]; });
     if(legN<1 && rng()<0.20){ spawnPU(LEGEND3[Math.floor(rng()*LEGEND3.length)]); } // 20% rare 3rd
   }
 }
 function spawnManager(dt){
-  if(S.roundTime<15) return;                 // nothing for the first 15s
+  if(S.roundTime<10) return;                 // nothing for the first 10s
   if(S._nextSpawn===undefined) S._nextSpawn=0;
   S._nextSpawn-=dt;
   if(S._nextSpawn<=0){ S._nextSpawn=15; spawnRefill(); }   // fill at 15s, then refill every 15s
@@ -1180,18 +1209,20 @@ function resetRound(bump){
     var st=starts[(p.id-1)%starts.length];
     p.x=st.x; p.z=st.z; p.dir=st.dir;
     p.pts=[{x:p.x,z:p.z}]; p.alive=true; p.speed=BASE_SPEED;
-    p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0,pacman:0,reverse:0,quake:0,fog:0,faketr:0,clone:0};
+    p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0,pacman:0,reverse:0,quake:0,fog:0,faketr:0,clone:0,evilclone:0};
     p.hasShield=false; p.y=0; p.jumpV=0; p.jumpsUsed=0; p.cannonCD=0; p.lastTurn=-1; p.bananaT=0; p.items=[]; p.sizeMode='normal';
-    p.upgrades={jump:false,airturn:false,doublejump:false,cannon:false};   // abilities don't carry between rounds
-    p.groundY=groundHeight(p.x,p.z); p.groundVy=0; p.lastGY=p.groundY; p._sc=1; p.cannonCharges=0;
+    if(!p.upgrades) p.upgrades={jump:false,airturn:false,doublejump:false,cannon:false};   // jump/air-turn/double-jump persist between rounds
+    p.groundY=groundHeight(p.x,p.z); p.groundVy=0; p.lastGY=p.groundY; p._sc=1;   // cannon charges persist too
     p.consumedLocal={};
     Game.resetTrails(p);
     if(p.mesh){ p.mesh.position.set(p.x,0,p.z); p.mesh.scale.set(1,1,1); p.mesh.visible=true; }
     if(p.eagle) p.eagle.visible=false;
   }
   S.global={moon:0,disco:0}; S.peels=[]; S.roundTime=0; S.blastHoles=[]; S.cannonShots=[];
-  S.meteor=0; S.bh=null; S.boulder=null; S.tornado=null; S.evil=null;
-  clearEvents();
+  S.meteor=0; S.bh=null; S.boulder=null; S.tornado=null;
+  // active events carry over into the new round; re-apply their setup so positions are fresh
+  S.shrink=0; S.speedMul=1;
+  if(S.events){ for(var en in S.events){ if(S.events[en]>0) eventSetup(en); } }
   Game.camYaw=0;
   if(S.mode==='solo'){ seedPowerups(); }
   ensureMatchMusic();
@@ -1392,10 +1423,16 @@ function clipSeg(a,b,holes){
   return segs.map(function(s){ return [{x:a.x+ux*s[0],z:a.z+uz*s[0]},{x:a.x+ux*s[1],z:a.z+uz*s[1]}]; });
 }
 function obstacleHit(px,pz){
-  if(!S.obstacles.length || inBlastHole(px,pz)) return false;
-  for(var i=0;i<S.obstacles.length;i++){ var s=S.obstacles[i];
-    if(distSeg(px,pz,s[0].x,s[0].z,s[1].x,s[1].z) < HIT_R) return true; }
+  if(!inBlastHole(px,pz)){
+    for(var i=0;i<S.obstacles.length;i++){ var s=S.obstacles[i]; if(distSeg(px,pz,s[0].x,s[0].z,s[1].x,s[1].z) < HIT_R) return true; }
+    for(var j=0;j<S.eventWalls.length;j++){ var e=S.eventWalls[j]; if(distSeg(px,pz,e[0].x,e[0].z,e[1].x,e[1].z) < HIT_R) return true; }
+  }
   return false;
+}
+function portalJump(p, tx, tz){
+  var fl=p.pts[p.pts.length-1]; if(fl && Math.hypot(p.x-fl.x,p.z-fl.z)>0.6) p.pts.push({x:p.x,z:p.z,mode:p.sizeMode});
+  p.x=tx; p.z=tz; p.pts.push({x:tx,z:tz,brk:true}); p._builtPts=-1; p._ptCd=0.7;
+  Game.spawnBurst(tx,tz,0x9b5bff);
 }
 function trailHitOther(p, o){
   var pts=o.pts, n=pts.length, head={x:o.x,z:o.z};
@@ -1426,7 +1463,7 @@ function trailHitSelf(p){
 function isImmune(p){ return p.fx.ghost>0||p.y>1.2||p.fx.eagle>0||p.fx.kaiju>0||p.fx.rocket>0||p.fx.ac130>0||p.fx.pacman>0; }
 
 // ===== RANDOM EVENTS =====
-var EVENTS=['blackout','emp','windstorm','traildecay','nightmare','snowstorm','solarflare','suddendeath','lightning','collapse','glitch','tilt'];
+var EVENTS=['blackout','emp','windstorm','traildecay','nightmare','snowstorm','solarflare','suddendeath','lightning','collapse','glitch','tilt','lasersweep','movingwalls','portalstorm'];
 function eventActive(n){ return S.events && S.events[n]>0; }
 function eventSetup(n){
   if(n==='windstorm'){ var a=rng()*6.28; S.wind={x:Math.cos(a),z:Math.sin(a)}; }
@@ -1435,6 +1472,10 @@ function eventSetup(n){
   if(n==='blackout'||n==='nightmare'){ if(Game.amb)Game.amb.intensity=0.28; if(Game.dir)Game.dir.intensity=0.15; if(Game.scene)Game.scene.background.setHex(0x01010a); }
   if(n==='solarflare') document.body.classList.add('flare');
   if(n==='glitch') document.body.classList.add('glitch');
+  if(n==='lasersweep'){ S.laser={x:-HALF+12, dir:1}; }
+  if(n==='movingwalls'){ S.eventWalls=[]; for(var i=0;i<5;i++){ var hor=rng()<0.5, ax=(rng()*2-1)*(HALF-40), az=(rng()*2-1)*(HALF-40), len=40+rng()*60;
+    S.eventWalls.push([{x:ax,z:az},{x:hor?ax+len:ax, z:hor?az:az+len}]); } if(Game.buildObstacles) Game._obKey=''; }
+  if(n==='portalstorm'){ S.portals=[]; for(var p2=0;p2<3;p2++){ S.portals.push({ax:(rng()*2-1)*(HALF-30),az:(rng()*2-1)*(HALF-30),bx:(rng()*2-1)*(HALF-30),bz:(rng()*2-1)*(HALF-30)}); } }
 }
 function eventEnd(n){
   if(n==='blackout'||n==='nightmare'){ if(!eventActive('blackout')&&!eventActive('nightmare')){ if(Game.amb)Game.amb.intensity=1.9; if(Game.dir)Game.dir.intensity=1.1; if(Game.scene)Game.scene.background.setHex(0x060616); } }
@@ -1443,6 +1484,9 @@ function eventEnd(n){
   if(n==='suddendeath') S.shrink=0;
   if(n==='windstorm') S.wind=null;
   if(n==='tilt') S.tilt=null;
+  if(n==='lasersweep') S.laser=null;
+  if(n==='movingwalls'){ S.eventWalls=[]; if(Game.buildObstacles) Game._obKey=''; }
+  if(n==='portalstorm') S.portals=[];
 }
 function startEvent(n){ if(!S.events) S.events={}; if(eventActive(n)) return; S.events[n]=60; eventSetup(n); toast('\u26A1 EVENT: '+n.toUpperCase(), '#ffd24a', 1800); shake(0.6); }
 function triggerEvents(){
@@ -1464,6 +1508,12 @@ function stepEvents(dt){
     if(n==='lightning'){ S._ltT=(S._ltT||0)-dt; if(S._ltT<=0){ S._ltT=1.4; var lx=(rng()*2-1)*HALF, lz=(rng()*2-1)*HALF; carveAll(lx,lz,12); addHole(lx,lz,12,3); Game.spawnBurst(lx,lz,0xbfe6ff); Game.addTracer(lx,lz); shake(0.5); flash('#bfe6ff'); } }
     if(n==='collapse'){ S._coT=(S._coT||0)-dt; if(S._coT<=0){ S._coT=0.9; var cx=(rng()*2-1)*HALF, cz=(rng()*2-1)*HALF; addHole(cx,cz,11,9); carveAll(cx,cz,11); } }
     if(n==='suddendeath'){ S.shrink=Math.min(HALF-40, (S.shrink||0)+dt*3.2); }
+    if(n==='lasersweep'&&S.laser){ S.laser.x+=S.laser.dir*36*dt; if(S.laser.x>HALF-12){S.laser.x=HALF-12;S.laser.dir=-1;} if(S.laser.x<-HALF+12){S.laser.x=-HALF+12;S.laser.dir=1;}
+      for(var lid in S.players){ var lp=S.players[lid]; if(lp.alive && !isImmune(lp) && lp.y<1.2 && Math.abs(lp.x-S.laser.x)<3) killOrShield(lp); } }
+    if(n==='portalstorm'&&S.portals.length){ for(var pid in S.players){ var pp2=S.players[pid]; if(!pp2.alive) continue; pp2._ptCd=(pp2._ptCd||0)-dt;
+      if(pp2._ptCd<=0){ for(var k=0;k<S.portals.length;k++){ var pr=S.portals[k];
+        if(Math.hypot(pp2.x-pr.ax,pp2.z-pr.az)<5){ portalJump(pp2, pr.bx, pr.bz); break; }
+        if(Math.hypot(pp2.x-pr.bx,pp2.z-pr.bz)<5){ portalJump(pp2, pr.ax, pr.az); break; } } } } }
   }
 }
 function nearestFoe(p){ var f=null,b=1e9; for(var id in S.players){ var o=S.players[id]; if(o.id===p.id||!o.alive)continue; var d=Math.hypot(o.x-p.x,o.z-p.z); if(d<b){b=d;f=o;} } return f; }
@@ -1493,7 +1543,7 @@ function applyViewFx(dt){
   // CLONE ARMY — I (enemy) see fake copies of any OTHER rider who cast it
   Game.cloneGroups=Game.cloneGroups||{};
   for(var id in S.players){ var p=S.players[id];
-    var show = (p.id!==S.me) && p.alive && p.fx.clone>0;
+    var show = p.alive && p.fx.clone>0;
     var cg=Game.cloneGroups[id];
     if(show){
       if(!cg){ cg={group:new THREE.Group(), bikes:[]}; Game.scene.add(cg.group);
@@ -1563,19 +1613,18 @@ function stepHazards(dt){
       }
     }
   }
-  // EVIL CLONE — hostile look-alike homes in on the target
-  if(S.evil){ var E=S.evil; E.life-=dt; var et=S.players[E.target];
-    if(E.life<=0 || !et || !et.alive){ S.evil=null; }
-    else { var dx=et.x-E.x, dz=et.z-E.z, d=Math.hypot(dx,dz)||1; var esp=52;
-      E.x+=dx/d*esp*dt; E.z+=dz/d*esp*dt;
-      if(d<5 && !isImmune(et)){ killOrShield(et); S.evil=null; }
-    }
+  // EVIL CLONE — a look-alike that homes in on whoever has the effect
+  for(var ecid in S.players){ var tp=S.players[ecid]; if(!(tp.fx.evilclone>0)||!tp.alive) continue;
+    if(tp._evilX===undefined){ var a0=rng()*6.28; tp._evilX=tp.x+Math.cos(a0)*160; tp._evilZ=tp.z+Math.sin(a0)*160; }
+    var dx=tp.x-tp._evilX, dz=tp.z-tp._evilZ, d=Math.hypot(dx,dz)||1;
+    tp._evilX+=dx/d*54*dt; tp._evilZ+=dz/d*54*dt;
+    if(d<5 && !isImmune(tp) && (tp.id===S.me || tp.isAI)){ tp.fx.evilclone=0; killOrShield(tp); }
   }
 }
 function stepPlayer(p, dt){
   if(!p.alive) return;
   if(p.id===S.me && !p.isAI) applyTurn(p);   // flush buffered turn as soon as cooldown allows
-  ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun','pacman','reverse','quake','fog','faketr','clone']
+  ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun','pacman','reverse','quake','fog','faketr','clone','evilclone']
     .forEach(function(k){ if(p.fx[k]>0) p.fx[k]=Math.max(0,p.fx[k]-dt); });
   // lock wall size per-segment: when size mode changes, seal the current segment at its size
   var cmode = p.fx.tiny>0?'tiny':(p.fx.kaiju>0?'kaiju':'normal');
@@ -1672,7 +1721,7 @@ function killOrShield(p){
   checkRoundEnd();
 }
 
-var HELD_TYPES={nitro:1,ghost:1,shield:1,wipe:1,tiny:1,ufo:1,bullet:1,rocket:1,eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,pacman:1,evilclone:1,reverse:1,quake:1,fog:1,faketr:1,clone:1};   // stored; jump is the only instant/permanent one
+var HELD_TYPES={nitro:1,ghost:1,shield:1,wipe:1,tiny:1,ufo:1,bullet:1,rocket:1,disco:1,eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,pacman:1,evilclone:1,reverse:1,quake:1,fog:1,faketr:1,clone:1};   // stored; jump is the only instant/permanent one
 function pickup(p,pu){
   if(pu.id){ S.consumed[pu.id]=true; p.consumedLocal[pu.id]=true; }
   var t=PU_TYPES[pu.type];
@@ -1722,8 +1771,12 @@ function applyEffect(p, type){
     case 'boulder': { var ang=rng()*6.28; S.boulder={x:Math.round((rng()*2-1)*40),z:Math.round((rng()*2-1)*40),dx:Math.cos(ang),dz:Math.sin(ang),life:15,carveT:0}; if(p.id===S.me) toast('\uD83E\uDEA8 BOULDER','#b08a5a',1400); break; }
     case 'tornado': { var ta=rng()*6.28; S.tornado={x:Math.round((rng()*2-1)*40),z:Math.round((rng()*2-1)*40),dx:Math.cos(ta),dz:Math.sin(ta),life:15,throwT:0}; if(p.id===S.me) toast('\uD83C\uDF2A\uFE0F TORNADO','#8ad0ff',1400); break; }
     case 'pacman': p.fx.pacman=10; p.pacT=0; if(p.id===S.me) toast('\uD83D\uDFE1 PAC-MAN!','#ffe83a',1400); break;
-    case 'evilclone': { var ef=null,eb=1e9; for(var e3 in S.players){ var oe=S.players[e3]; if(oe.id===p.id||!oe.alive)continue; var de=Math.hypot(oe.x-p.x,oe.z-p.z); if(de<eb){eb=de;ef=oe;} }
-      if(ef){ S.evil={x:ef.x, z:ef.z-30, dir:'S', life:12, target:ef.id, color:ef.color}; if(ef.id===S.me) toast('\uD83D\uDC7F EVIL CLONE HUNTS YOU','#ff4a4a',1500); } break; }
+    case 'evilclone': { var et2 = S.test ? p : nearestFoe(p);
+      if(et2){ et2.fx.evilclone=12; var ea=rng()*6.28;
+        et2._evilX=Math.max(-HALF+6,Math.min(HALF-6, et2.x+Math.cos(ea)*160));
+        et2._evilZ=Math.max(-HALF+6,Math.min(HALF-6, et2.z+Math.sin(ea)*160));
+        if(et2.id===S.me) toast('\uD83D\uDC7F EVIL CLONE HUNTS YOU','#ff4a4a',1500); }
+      break; }
     case 'reverse': case 'quake': case 'fog': case 'faketr': {
       var vt = S.test ? p : nearestFoe(p); if(vt){ vt.fx[type]=PU_TYPES[type].dur; if(vt.id===S.me) toast((PU_TYPES[type].sym||'')+' '+PU_TYPES[type].label,PU_TYPES[type].css,1400); } break; }
     case 'clone': p.fx.clone=15; sfxFile(SND_CLONE); if(p.id===S.me) toast('\uD83D\uDC65 CLONE ARMY','#c8c8ff',1400); break;
@@ -1964,6 +2017,7 @@ function loop(t){
   Game.renderHoles();
   Game.renderHazards();
   Game.buildObstacles();
+  Game.renderEvents(dt);
   Game.stepGlobals(now,dt);
   Game.syncPU();
   Game.animatePU(now);

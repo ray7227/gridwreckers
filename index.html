@@ -262,7 +262,7 @@ var COLORS = [
 ];
 var ARENA = 640;
 var HALF = ARENA/2;
-var BASE_SPEED = 46;
+var BASE_SPEED = 60;
 var WALL_H = 6.2;
 var HIT_R = 1.0;
 var TURN_COOLDOWN = 0.05;
@@ -694,16 +694,17 @@ var Game = {
           '  gl_FragColor=vec4(c,1.0);',
           '}'
         ].join('\n') }));
-    sc.add(sky);
+    sc.add(sky); this.sky=sky;
     // distant city skyline + mountains for the synthwave vibe
-    (function(){
+    this.skyline=new THREE.Group(); sc.add(this.skyline);
+    (function(sl){
       for(var i=0;i<90;i++){ var an=i/90*6.28, r=HALF+30+Math.random()*40, bw=6+Math.random()*11, bh=18+Math.random()*80;
         var b=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bw), new THREE.MeshBasicMaterial({color:0x0a0620}));
-        b.position.set(Math.cos(an)*r, bh/2-6, Math.sin(an)*r); sc.add(b); }
+        b.position.set(Math.cos(an)*r, bh/2-6, Math.sin(an)*r); sl.add(b); }
       for(var m=0;m<12;m++){ var mn=m/12*6.28, mr=HALF+150, mh=70+Math.random()*90;
         var mt=new THREE.Mesh(new THREE.ConeGeometry(70+Math.random()*50, mh, 4), new THREE.MeshBasicMaterial({color:0x140b28}));
-        mt.position.set(Math.cos(mn)*mr, mh/2-10, Math.sin(mn)*mr); mt.rotation.y=Math.random()*3; sc.add(mt); }
-    })();
+        mt.position.set(Math.cos(mn)*mr, mh/2-10, Math.sin(mn)*mr); mt.rotation.y=Math.random()*3; sl.add(mt); }
+    })(this.skyline);
 
     // deformable neon-grid arena floor (bows into craters)
     var GSEG=120;
@@ -1463,7 +1464,7 @@ function trailHitSelf(p){
 function isImmune(p){ return p.fx.ghost>0||p.y>1.2||p.fx.eagle>0||p.fx.kaiju>0||p.fx.rocket>0||p.fx.ac130>0||p.fx.pacman>0; }
 
 // ===== RANDOM EVENTS =====
-var EVENTS=['blackout','emp','windstorm','traildecay','nightmare','snowstorm','solarflare','suddendeath','lightning','collapse','glitch','tilt','lasersweep','movingwalls','portalstorm'];
+var EVENTS=['blackout','emp','windstorm','nightmare','suddendeath','lightning','collapse','glitch','tilt','lasersweep','movingwalls','portalstorm'];
 function eventActive(n){ return S.events && S.events[n]>0; }
 function eventSetup(n){
   if(n==='windstorm'){ var a=rng()*6.28; S.wind={x:Math.cos(a),z:Math.sin(a)}; }

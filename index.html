@@ -544,7 +544,7 @@ var Net = {
   },
   state:function(){
     var p=S.players[S.me]; if(!p) return {t:'state',from:S.me};
-    return {t:'state', from:S.me, n:p.name, c:p.color, pts:p.pts, x:p.x, z:p.z, dir:p.dir, alive:p.alive,
+    return {t:'state', from:S.me, n:p.name, c:p.color, pts:p.pts, x:p.x, z:p.z, dir:p.dir, alive:p.alive, rd:S.round,
       fx:p.fx, upgrades:p.upgrades, sc:S.scores[S.me]||0, cons:p.consumedLocal, holes:S.blastHoles};
   },
   onMsg:function(topic,payload){
@@ -572,6 +572,7 @@ var Net = {
       if(!S.host){ S.powerups=d.list||S.powerups; S.seed=d.seed||S.seed; S.round=d.round||S.round; }
     } else if(kind==='state'){
       if(!id || id===S.me) return;
+      if(typeof d.rd==='number' && d.rd < S.round) return;   // stale round — ignore
       var o=S.players[id];
       if(!o){ o=newPlayer(id, d.c||COLORS[(id-1)%COLORS.length].hex, d.n); S.players[id]=o; if(Game.scene) Game.spawnMeshes(o); }
       o.name=d.n; o.color=d.c||o.color; o.pts=d.pts||o.pts; o.x=d.x; o.z=d.z; o.dir=d.dir; o.alive=d.alive;
@@ -892,8 +893,8 @@ var Game = {
     p.shieldMesh.visible=false; this.scene.add(p.shieldMesh);
     p.trailGroup=new THREE.Group(); this.scene.add(p.trailGroup);
     p.liveGroup=new THREE.Group(); this.scene.add(p.liveGroup);
-    p.trailMat=new THREE.MeshBasicMaterial({color:p.color, transparent:true, opacity:.32});
-    p.trailTop=new THREE.MeshBasicMaterial({color:p.color, transparent:true, opacity:.45});
+    p.trailMat=new THREE.MeshBasicMaterial({color:p.color, transparent:true, opacity:.5, side:THREE.DoubleSide});
+    p.trailTop=new THREE.MeshBasicMaterial({color:p.color, transparent:true, opacity:.6, side:THREE.DoubleSide});
     p._builtPts=-1; p._builtHoles=-1;
   },
 
@@ -945,10 +946,10 @@ var Game = {
   segMesh:function(a,b,p,mode){
     var dx=b.x-a.x, dz=b.z-a.z; var len=Math.hypot(dx,dz); if(len<0.02) return null;
     var sz=sizeFor(mode||'normal'); var w=sz.w, h=sz.h;
-    var gy=groundHeight((a.x+b.x)/2, (a.z+b.z)/2);
-    var wy=((a.wy||0)+(b.wy||0))/2;
+    var wy=((a.wy||0)+(b.wy||0))/2;   // true world elevation captured when the point was laid
     var m=new THREE.Mesh(new THREE.BoxGeometry(w, h, len), p.trailMat);
-    m.position.set((a.x+b.x)/2, gy+wy+h/2, (a.z+b.z)/2);
+    m.frustumCulled=false;
+    m.position.set((a.x+b.x)/2, wy+h/2, (a.z+b.z)/2);
     m.rotation.y = Math.atan2(dx,dz);
     return m;
   },
@@ -967,7 +968,8 @@ var Game = {
     var drawing = !(p.fx.ghost>0 || p.fx.eagle>0 || p.fx.rocket>0 || p.fx.ac130>0 || p.fx.pacman>0);
     if(drawing){
       var cm = p.fx.tiny>0?'tiny':(p.fx.kaiju>0?'kaiju':'normal');
-      var last=p.pts[p.pts.length-1], head={x:p.x,z:p.z,wy:p.y||0};
+      var remote=(p!==S.players[S.me] && !p.isAI && p.rx!==undefined);
+      var last=p.pts[p.pts.length-1], head={x:remote?p.rx:p.x,z:remote?p.rz:p.z,wy:trailElev(p)};
       if(Math.hypot(head.x-last.x,head.z-last.z) > 0.4){ var s2=this.segMesh(last, head, p, cm); if(s2) p.liveGroup.add(s2); }
     }
   },
@@ -978,6 +980,17 @@ var Game = {
     p._builtPts=-1; p._builtHoles=-1;
   },
 
+  applyCam:function(cx,cy,cz, lx,ly,lz, roll){
+    this.camera.position.set(cx,cy,cz);
+    if(roll){
+      var dx=lx-cx, dy=ly-cy, dz=lz-cz, dl=Math.hypot(dx,dy,dz)||1; dx/=dl; dy/=dl; dz/=dl;
+      var Rx=-dz, Rz=dx, Rl=Math.hypot(Rx,Rz)||1; Rx/=Rl; Rz/=Rl;          // right = dir x worldUp
+      var Ux=-Rz*dy, Uy=Rz*dx-Rx*dz, Uz=Rx*dy;                              // trueUp = right x dir
+      var c=Math.cos(roll), s=Math.sin(roll);
+      this.camera.up.set(Ux*c+Rx*s, Uy*c, Uz*c+Rz*s);                       // roll up around the view axis
+    } else this.camera.up.set(0,1,0);
+    this.camera.lookAt(lx,ly,lz);
+  },
   updateCamera:function(dt){
     var p=S.players[S.me]; if(!p||!p.mesh) return;
     if(p.fx.ac130>0){                       // AC-130 gunship: high, looking down
@@ -992,25 +1005,27 @@ var Game = {
     this.camYaw += d*Math.min(1,dt*(S.fpv?9:6));
     var fx=Math.sin(this.camYaw), fz=Math.cos(this.camYaw);
     var ty=(p.groundY||0) - holeDisp(p.x,p.z);
-    // arena tilt: roll the camera up-vector so the world appears to rotate
-    var roll=eventActive('tilt')?Math.sin(S.tiltA||0)*0.6:0;
-    this.camera.up.set(Math.sin(roll),Math.cos(roll),0);
+    var roll=eventActive('tilt')?(S.tiltA||0):0;   // full continuous roll -> map goes upside down
+    this.camera.up.set(0,1,0);
     if(S.fpv){   // first-person: higher on the bike, looking forward, no bike visible
       var cy=ty+(p.y||0)+5.5;
       var cx=p.x + fx*0.5, cz=p.z + fz*0.5;
       if(this.shakeAmt>0){ this.shakeAmt=Math.max(0,this.shakeAmt-dt*2.2); var s=this.shakeAmt*2; cx+=(Math.random()-.5)*s; cy+=(Math.random()-.5)*s; cz+=(Math.random()-.5)*s; }
       this.camera.position.set(cx,cy,cz);
       this.camera.lookAt(p.x+fx*30, ty+3+(p.y||0), p.z+fz*30);
+      if(roll) this.camera.rotateZ(roll);
       var wf=(p.fx.nitro>0?95:85); this.fov+=(wf-this.fov)*Math.min(1,dt*5); this.camera.fov=this.fov; this.camera.updateProjectionMatrix();
       return;
     }
     var dist=18, hgt=9.5, look=16;
+    if(roll){ dist=26; hgt=13; }   // pull back a touch while flipping so both bikes stay framed
     var cx=p.x - fx*dist, cz=p.z - fz*dist, cy=hgt + p.y + ty;
     if(this.shakeAmt>0){ this.shakeAmt=Math.max(0,this.shakeAmt-dt*2.2);
       var s=this.shakeAmt*4; cx+=(Math.random()-.5)*s; cy+=(Math.random()-.5)*s; cz+=(Math.random()-.5)*s; }
     this.camera.position.set(cx,cy,cz);
     this.camera.lookAt(p.x + fx*look, 2.5 + p.y*0.6 + ty, p.z + fz*look);
-    var wantFov = 70 + (p.fx.nitro>0?16:0);
+    if(roll) this.camera.rotateZ(roll);   // barrel roll around the view axis
+    var wantFov = 70 + (p.fx.nitro>0?16:0) + (roll?12:0);
     this.fov += (wantFov-this.fov)*Math.min(1,dt*5);
     this.camera.fov=this.fov; this.camera.updateProjectionMatrix();
   },
@@ -1228,7 +1243,7 @@ var Game = {
         tp2.evilMesh.rotation.y=Math.atan2(tp2.x-tp2._evilX, tp2.z-tp2._evilZ);
         // trail
         if(!tp2.evilTrail){ tp2.evilTrail=new THREE.Group(); this.scene.add(tp2.evilTrail); }
-        var pts=tp2._evilPts||[]; var need=Math.max(0,pts.length-1);
+        var pts=(tp2._evilPts||[]).concat([{x:tp2._evilX,z:tp2._evilZ}]); var need=Math.max(0,pts.length-1);
         while(tp2.evilTrail.children.length<need){ var seg=new THREE.Mesh(new THREE.BoxGeometry(0.7,WALL_H,1), new THREE.MeshBasicMaterial({color:tp2.color, transparent:true, opacity:0.6})); tp2.evilTrail.add(seg); }
         for(var ti=0; ti<tp2.evilTrail.children.length; ti++){ var sm=tp2.evilTrail.children[ti];
           if(ti<need){ var A=pts[ti], B=pts[ti+1]; var ddx=B.x-A.x, ddz=B.z-A.z, ln=Math.hypot(ddx,ddz)||0.1; sm.visible=true;
@@ -1479,7 +1494,7 @@ function applyTurn(p){
   if(p.fx.reverse>0) d=-d;             // reverse world
   p.lastTurn=now;
   var idx=CW.indexOf(p.dir); idx=(idx+(d>0?1:3))%4;
-  p.pts.push({x:p.x,z:p.z, mode:p.sizeMode||'normal', wy:p.y||0});
+  p.pts.push({x:p.x,z:p.z, mode:p.sizeMode||'normal', wy:trailElev(p)});
   p.dir=CW[idx];
 }
 
@@ -1570,6 +1585,7 @@ function groundHeight(x,z){
 }
 function terrainY(x,z){ return groundHeight(x,z) - holeDisp(x,z); }
 // crater depth field: how far the ground bows down at (x,z)
+function trailElev(p){ return (p.groundY||0) - holeDisp(p.x,p.z) + (p.y||0); }
 function holeDisp(x,z){
   var d=0;
   for(var i=0;i<S.blastHoles.length;i++){ var h=S.blastHoles[i]; var dd=Math.hypot(x-h.x,z-h.z);
@@ -1685,7 +1701,7 @@ function stepEvents(dt){
   for(var n in S.events){ if(!(S.events[n]>0)) continue; S.events[n]-=dt;
     if(S.events[n]<=0){ eventEnd(n); delete S.events[n]; continue; }
     if(n==='windstorm'&&S.wind){ for(var id in S.players){ var p=S.players[id]; if(p.alive){ p.x+=S.wind.x*30*dt; p.z+=S.wind.z*30*dt; } } }
-    if(n==='tilt'){ S.tiltA=(S.tiltA||0)+dt*0.7; }
+    if(n==='tilt'){ S.tiltA=(S.tiltA||0)+dt*0.8; }   // continuous full roll (upside down)
     if(n==='nightmare') S.speedMul*=1.6;
     if(n==='lightning'){ S._ltT=(S._ltT||0)-dt; if(S._ltT<=0){ S._ltT=0.28;
       for(var ls=0; ls<3; ls++){ var lx=(rng()*2-1)*HALF, lz=(rng()*2-1)*HALF; carveAll(lx,lz,16); addHole(lx,lz,16,4); Game.spawnBurst(lx,lz,0xdff0ff); if(Game.lightningBolt)Game.lightningBolt(lx,lz); }
@@ -1806,22 +1822,35 @@ function stepHazards(dt){
       }
     }
   }
-  // EVIL CLONE — a look-alike that homes in on its target and lays a deadly trail
+  // EVIL CLONE — moves like a bot (90° zig-zags), lays a deadly wall, only the target can be hit
   for(var ecid in S.players){ var tp=S.players[ecid]; if(!(tp.fx.evilclone>0)||!tp.alive) continue;
-    if(tp._evilX===undefined){ var a0=rng()*6.28; tp._evilX=tp.x+Math.cos(a0)*70; tp._evilZ=tp.z+Math.sin(a0)*70; tp._evilPts=[{x:tp._evilX,z:tp._evilZ}]; tp._evilDrop=0; }
-    var dx=tp.x-tp._evilX, dz=tp.z-tp._evilZ, d=Math.hypot(dx,dz)||1;
-    tp._evilX+=dx/d*58*dt; tp._evilZ+=dz/d*58*dt;
-    // drop trail points behind it
-    tp._evilDrop=(tp._evilDrop||0)-dt;
-    if(tp._evilDrop<=0){ tp._evilDrop=0.08; if(!tp._evilPts) tp._evilPts=[];
-      var lp=tp._evilPts[tp._evilPts.length-1];
-      if(!lp || Math.hypot(tp._evilX-lp.x,tp._evilZ-lp.z)>1.5){ tp._evilPts.push({x:tp._evilX,z:tp._evilZ}); if(tp._evilPts.length>260) tp._evilPts.shift(); } }
-    // target dies on contact with the clone or its trail
+    if(tp._evilX===undefined){ var a0=rng()*6.28; tp._evilX=tp.x+Math.cos(a0)*35; tp._evilZ=tp.z+Math.sin(a0)*35;
+      tp._evilDir=CW[Math.floor(rng()*4)]; tp._evilTurn=0.3; tp._evilPts=[{x:tp._evilX,z:tp._evilZ}]; }
+    var d=Math.hypot(tp.x-tp._evilX, tp.z-tp._evilZ);
+    tp._evilTurn-=dt;
+    var atEdge = Math.abs(tp._evilX)>HALF-10 || Math.abs(tp._evilZ)>HALF-10;
+    if(tp._evilTurn<=0 || atEdge){ tp._evilTurn=0.18+rng()*0.34;
+      var li=CW.indexOf(tp._evilDir), opts=[tp._evilDir, CW[(li+3)%4], CW[(li+1)%4]];
+      var tdir=DIRS[tp.dir]||{x:0,z:0}, lead=Math.min(55, d*0.7);
+      var ix=tp.x+tdir.x*lead, iz=tp.z+tdir.z*lead, best=tp._evilDir, bs=-1e9;
+      for(var oi=0;oi<opts.length;oi++){ var dd2=DIRS[opts[oi]]; var nx=tp._evilX+dd2.x*24, nz=tp._evilZ+dd2.z*24;
+        if(Math.abs(nx)>HALF-6||Math.abs(nz)>HALF-6) continue;
+        var vx=ix-tp._evilX, vz=iz-tp._evilZ, vl=Math.hypot(vx,vz)||1;
+        var align=(dd2.x*vx+dd2.z*vz)/vl + (opts[oi]===tp._evilDir?0.25:0);
+        if(align>bs){ bs=align; best=opts[oi]; } }
+      if(best!==tp._evilDir){ tp._evilPts.push({x:tp._evilX,z:tp._evilZ}); if(tp._evilPts.length>200) tp._evilPts.shift(); tp._evilDir=best; }
+    }
+    var dd=DIRS[tp._evilDir]; var spd=BASE_SPEED*0.9;
+    tp._evilX=Math.max(-HALF+4,Math.min(HALF-4, tp._evilX+dd.x*spd*dt));
+    tp._evilZ=Math.max(-HALF+4,Math.min(HALF-4, tp._evilZ+dd.z*spd*dt));
+    // only the target (enemy) can be hit — by the clone or its wall
     if(!isImmune(tp) && (tp.id===S.me || tp.isAI)){
-      var hitEvil = d<4;
-      if(!hitEvil && tp._evilPts){ for(var ei=0; ei<tp._evilPts.length-2; ei++){ var a=tp._evilPts[ei], b=tp._evilPts[ei+1];
-        if(distSeg(tp.x,tp.z,a.x,a.z,b.x,b.z)<HIT_R){ hitEvil=true; break; } } }
-      if(hitEvil){ tp.fx.evilclone=0; killOrShield(tp); }
+      var hit=d<3.5;
+      if(!hit && tp._evilPts){ var pn=tp._evilPts.length;
+        for(var ei=0; ei<pn; ei++){ var a=tp._evilPts[ei], b=(ei<pn-1)?tp._evilPts[ei+1]:{x:tp._evilX,z:tp._evilZ};
+          if(ei===pn-1 && Math.hypot(b.x-a.x,b.z-a.z)<0.5) break;
+          if(distSeg(tp.x,tp.z,a.x,a.z,b.x,b.z)<HIT_R){ hit=true; break; } } }
+      if(hit){ tp.fx.evilclone=0; killOrShield(tp); }
     }
   }
 }
@@ -1833,9 +1862,9 @@ function stepPlayer(p, dt){
   // lock wall size per-segment: when size mode changes, seal the current segment at its size
   var cmode = p.fx.tiny>0?'tiny':(p.fx.kaiju>0?'kaiju':'normal');
   if(p.sizeMode===undefined) p.sizeMode='normal';
-  if(cmode!==p.sizeMode){ p.pts.push({x:p.x,z:p.z, mode:p.sizeMode, wy:p.y||0}); p._builtPts=-1; p.sizeMode=cmode; }
+  if(cmode!==p.sizeMode){ p.pts.push({x:p.x,z:p.z, mode:p.sizeMode, wy:trailElev(p)}); p._builtPts=-1; p.sizeMode=cmode; }
   // on sloped ground, seal segments as height changes so the wall stays where it was laid
-  if(S.map==='gauntlet'){ var gyn=groundHeight(p.x,p.z); if(Math.abs(gyn-(p.lastGY||0))>3){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:p.y||0}); p._builtPts=-1; p.lastGY=gyn; } }
+  if(S.map==='gauntlet'){ var gyn=groundHeight(p.x,p.z); if(Math.abs(gyn-(p.lastGY||0))>3){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:trailElev(p)}); p._builtPts=-1; p.lastGY=gyn; } }
   // PAC-MAN: continuously chomp walls under you and eat any foe you touch
   if(p.fx.pacman>0){ carveAll(p.x,p.z,7);
     for(var eid in S.players){ var ep=S.players[eid]; if(ep.id!==p.id && ep.alive && !isImmune(ep) && Math.hypot(ep.x-p.x,ep.z-p.z)<6) killOrShield(ep); } }
@@ -1888,8 +1917,8 @@ function stepPlayer(p, dt){
   else p._colY=0;
   // permanent jump arc: while airborne, drop elevated trail points so the path stays up in the air
   if(p.y>0.4 && p.fx.eagle<=0 && p.fx.rocket<=0 && p.fx.ac130<=0){
-    if(p._airY===undefined || Math.abs(p.y-p._airY)>1.0){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:p.y}); p._builtPts=-1; p._airY=p.y; }
-  } else { if(p._airY!==undefined && p._airY>0.4){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:0}); p._builtPts=-1; } p._airY=0; }
+    if(p._airY===undefined || Math.abs(p.y-p._airY)>1.0){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:trailElev(p)}); p._builtPts=-1; p._airY=p.y; }
+  } else { if(p._airY!==undefined && p._airY>0.4){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:trailElev(p)}); p._builtPts=-1; } p._airY=0; }
   if(!immune){
     if(trailHitSelf(p)){ return killOrShield(p); }
     if(obstacleHit(p.x,p.z)){ return killOrShield(p); }
@@ -1982,9 +2011,10 @@ function applyEffect(p, type){
     case 'pacman': p.fx.pacman=10; p.pacT=0; if(p.id===S.me) toast('\uD83D\uDFE1 PAC-MAN!','#ffe83a',1400); break;
     case 'evilclone': { var et2 = nearestFoe(p);
       if(et2){ et2.fx.evilclone=1; var ea=rng()*6.28;
-        et2._evilX=Math.max(-HALF+6,Math.min(HALF-6, et2.x+Math.cos(ea)*70));
-        et2._evilZ=Math.max(-HALF+6,Math.min(HALF-6, et2.z+Math.sin(ea)*70));
-        et2._evilPts=[{x:et2._evilX,z:et2._evilZ}]; et2._evilDrop=0;
+        et2._evilX=Math.max(-HALF+6,Math.min(HALF-6, et2.x+Math.cos(ea)*35));
+        et2._evilZ=Math.max(-HALF+6,Math.min(HALF-6, et2.z+Math.sin(ea)*35));
+        et2._evilDir=CW[Math.floor(rng()*4)]; et2._evilTurn=0.3;
+        et2._evilPts=[{x:et2._evilX,z:et2._evilZ}];
         if(et2.id===S.me) toast('\uD83D\uDC7F EVIL CLONE HUNTS YOU','#ff4a4a',1500); }
       break; }
     case 'reverse': case 'quake': case 'fog': {
@@ -2219,7 +2249,7 @@ function aiThink(p, dt){
   }
   var best=p.dir, bestS=-1e12;
   [p.dir,left,right].forEach(function(o){ var sc=score(o); if(sc>bestS){bestS=sc;best=o;} });
-  if(best!==p.dir){ p.pts.push({x:p.x,z:p.z}); p.dir=best; p.aiStraight=0; }
+  if(best!==p.dir){ p.pts.push({x:p.x,z:p.z,wy:trailElev(p)}); p.dir=best; p.aiStraight=0; }
 }
 
 // ============================================================
@@ -2243,15 +2273,19 @@ function loop(t){
       if(p.isAI){ aiThink(p,dt); stepPlayer(p,dt); }
       else {
         if(p.alive){
-          var age=Math.min(0.5,(Date.now()-(p.ts||Date.now()))/1000);
+          var age=Math.min(0.3,(Date.now()-(p.ts||Date.now()))/1000);
           var d=DIRS[p.dir]||{x:0,z:0};
-          p.rx = p.x + d.x*p.speed*age; p.rz = p.z + d.z*p.speed*age;
+          var tx = p.x + d.x*p.speed*age, tz = p.z + d.z*p.speed*age;   // dead-reckoned target
+          if(p.rx===undefined){ p.rx=tx; p.rz=tz; }
+          var k=Math.min(1,dt*11);
+          p.rx += (tx-p.rx)*k; p.rz += (tz-p.rz)*k;                     // ease toward it (no snap)
         }
       }
     }
   }
 
   stepCannons(dt);
+  if(!S.over && S.mode==='online' && S.roundTime>1) checkRoundEnd();   // remote deaths arrive via state, not local killOrShield
   if(!S.over){ S._recT=(S._recT||0)-dt; if(S._recT<=0){ S._recT=0.05; recordFrame(); } }
   if(!S.over) stepHazards(dt);
   if(!S.over) stepEvents(dt);

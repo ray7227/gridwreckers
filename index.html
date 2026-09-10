@@ -995,6 +995,7 @@ var Game = {
     var p=S.players[S.me]; if(!p||!p.mesh) return;
     if(p.fx.ac130>0){                       // AC-130 gunship: high, looking down
       var ax=(S.aim?S.aim.x:p.x), az=(S.aim?S.aim.z:p.z);
+      this.camera.up.set(0,1,0);
       this.camera.position.set(p.x, 205, p.z+70);
       this.camera.lookAt(ax, 0, az);
       this.fov += (58-this.fov)*Math.min(1,dt*5); this.camera.fov=this.fov; this.camera.updateProjectionMatrix();
@@ -1006,14 +1007,11 @@ var Game = {
     var fx=Math.sin(this.camYaw), fz=Math.cos(this.camYaw);
     var ty=(p.groundY||0) - holeDisp(p.x,p.z);
     var roll=eventActive('tilt')?(S.tiltA||0):0;   // full continuous roll -> map goes upside down
-    this.camera.up.set(0,1,0);
     if(S.fpv){   // first-person: higher on the bike, looking forward, no bike visible
       var cy=ty+(p.y||0)+5.5;
       var cx=p.x + fx*0.5, cz=p.z + fz*0.5;
       if(this.shakeAmt>0){ this.shakeAmt=Math.max(0,this.shakeAmt-dt*2.2); var s=this.shakeAmt*2; cx+=(Math.random()-.5)*s; cy+=(Math.random()-.5)*s; cz+=(Math.random()-.5)*s; }
-      this.camera.position.set(cx,cy,cz);
-      this.camera.lookAt(p.x+fx*30, ty+3+(p.y||0), p.z+fz*30);
-      if(roll) this.camera.rotateZ(roll);
+      this.applyCam(cx,cy,cz, p.x+fx*30, ty+3+(p.y||0), p.z+fz*30, roll);
       var wf=(p.fx.nitro>0?95:85); this.fov+=(wf-this.fov)*Math.min(1,dt*5); this.camera.fov=this.fov; this.camera.updateProjectionMatrix();
       return;
     }
@@ -1022,9 +1020,7 @@ var Game = {
     var cx=p.x - fx*dist, cz=p.z - fz*dist, cy=hgt + p.y + ty;
     if(this.shakeAmt>0){ this.shakeAmt=Math.max(0,this.shakeAmt-dt*2.2);
       var s=this.shakeAmt*4; cx+=(Math.random()-.5)*s; cy+=(Math.random()-.5)*s; cz+=(Math.random()-.5)*s; }
-    this.camera.position.set(cx,cy,cz);
-    this.camera.lookAt(p.x + fx*look, 2.5 + p.y*0.6 + ty, p.z + fz*look);
-    if(roll) this.camera.rotateZ(roll);   // barrel roll around the view axis
+    this.applyCam(cx,cy,cz, p.x + fx*look, 2.5 + p.y*0.6 + ty, p.z + fz*look, roll);
     var wantFov = 70 + (p.fx.nitro>0?16:0) + (roll?12:0);
     this.fov += (wantFov-this.fov)*Math.min(1,dt*5);
     this.camera.fov=this.fov; this.camera.updateProjectionMatrix();
@@ -1831,16 +1827,16 @@ function stepHazards(dt){
     var atEdge = Math.abs(tp._evilX)>HALF-10 || Math.abs(tp._evilZ)>HALF-10;
     if(tp._evilTurn<=0 || atEdge){ tp._evilTurn=0.18+rng()*0.34;
       var li=CW.indexOf(tp._evilDir), opts=[tp._evilDir, CW[(li+3)%4], CW[(li+1)%4]];
-      var tdir=DIRS[tp.dir]||{x:0,z:0}, lead=Math.min(55, d*0.7);
+      var tdir=DIRS[tp.dir]||{x:0,z:0}, lead=Math.max(70, Math.min(180, d*1.4));
       var ix=tp.x+tdir.x*lead, iz=tp.z+tdir.z*lead, best=tp._evilDir, bs=-1e9;
       for(var oi=0;oi<opts.length;oi++){ var dd2=DIRS[opts[oi]]; var nx=tp._evilX+dd2.x*24, nz=tp._evilZ+dd2.z*24;
         if(Math.abs(nx)>HALF-6||Math.abs(nz)>HALF-6) continue;
         var vx=ix-tp._evilX, vz=iz-tp._evilZ, vl=Math.hypot(vx,vz)||1;
-        var align=(dd2.x*vx+dd2.z*vz)/vl + (opts[oi]===tp._evilDir?0.25:0);
+        var align=(dd2.x*vx+dd2.z*vz)/vl + (opts[oi]===tp._evilDir?0.2:0);
         if(align>bs){ bs=align; best=opts[oi]; } }
       if(best!==tp._evilDir){ tp._evilPts.push({x:tp._evilX,z:tp._evilZ}); if(tp._evilPts.length>200) tp._evilPts.shift(); tp._evilDir=best; }
     }
-    var dd=DIRS[tp._evilDir]; var spd=BASE_SPEED*0.9;
+    var dd=DIRS[tp._evilDir]; var spd=BASE_SPEED*1.08;
     tp._evilX=Math.max(-HALF+4,Math.min(HALF-4, tp._evilX+dd.x*spd*dt));
     tp._evilZ=Math.max(-HALF+4,Math.min(HALF-4, tp._evilZ+dd.z*spd*dt));
     // only the target (enemy) can be hit — by the clone or its wall
@@ -2391,6 +2387,8 @@ function drawHUD(){
     if(me.upgrades) PERM_KEYS.forEach(function(k){if(me.upgrades[k]){var u=PU_TYPES[k];puH+='<span class="chip" style="border-color:'+u.css+';color:'+u.css+'">'+u.label+' PERM</span> ';}});
   }
   if(S.global.disco>0) puH+='<span class="chip" style="border-color:'+PU_TYPES.disco.css+';color:'+PU_TYPES.disco.css+'">\uD83E\uDD5B DISCO '+S.global.disco.toFixed(1)+'s</span> ';
+  if(S.events){ var evOn=[]; for(var en in S.events){ if(S.events[en]>0) evOn.push(en.toUpperCase()); }
+    if(evOn.length) puH+='<br><span class="chip" style="border-color:#ffd24a;color:#ffd24a">\u26A1 '+evOn.join(' + ')+'</span>'; }
   if(me && me.items && me.items.length){
     var slots=me.items.map(function(ty){ var u=PU_TYPES[ty]; return '<span class="chip" style="border-color:'+u.css+';color:'+u.css+'">'+(u.sym||'')+' '+u.label+'</span>'; }).join(' ');
     puH+='<br><span style="opacity:.8;font-size:12px">HELD (E / USE): </span>'+slots;

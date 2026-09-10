@@ -581,6 +581,7 @@ var Net = {
       o.name=d.n; o.color=d.c||o.color; o.pts=d.pts||o.pts; o.x=d.x; o.z=d.z; o.dir=d.dir; o.alive=d.alive; o.fpvPref=!!d.fp;
       o.fx=d.fx||o.fx; o.upgrades=d.upgrades||o.upgrades; if(d.holes) S.blastHoles=d.holes;
       o.ts=Date.now();
+      o.buf=o.buf||[]; o.buf.push({t:o.ts, x:d.x, z:d.z}); if(o.buf.length>10) o.buf.shift();
       if(d.cons){ for(var k in d.cons) S.consumed[k]=true; }
       if(typeof d.sc==='number') S.scores[id]=d.sc;
     }
@@ -1393,7 +1394,7 @@ function resetRound(bump){
   for(var id in S.players){
     var p=S.players[id];
     var st=starts[(p.id-1)%starts.length];
-    p.x=st.x; p.z=st.z; p.dir=st.dir;
+    p.x=st.x; p.z=st.z; p.dir=st.dir; p.rx=st.x; p.rz=st.z; p.buf=[];
     p.pts=[{x:p.x,z:p.z}]; p.alive=true; p.speed=BASE_SPEED;
     p.fx={nitro:0,ghost:0,jump:0,shield:0,eagle:0,kaiju:0,tiny:0,banana:0,bullet:0,rocket:0,spin:0,stun:0,pacman:0,reverse:0,quake:0,fog:0,faketr:0,clone:0,evilclone:0};
     p.hasShield=false; p.y=0; p.jumpV=0; p.jumpsUsed=0; p.cannonCD=0; p.lastTurn=-1; p.bananaT=0; p.items=[]; p.sizeMode='normal';
@@ -2287,12 +2288,15 @@ function loop(t){
       if(p.isAI){ aiThink(p,dt); stepPlayer(p,dt); }
       else {
         if(p.alive){
-          var age=Math.min(0.22,(Date.now()-(p.ts||Date.now()))/1000);
-          var d=DIRS[p.dir]||{x:0,z:0};
-          var tx = p.x + d.x*p.speed*age, tz = p.z + d.z*p.speed*age;   // dead-reckoned target
-          if(p.rx===undefined){ p.rx=tx; p.rz=tz; }
-          var k=Math.min(1,dt*20);
-          p.rx += (tx-p.rx)*k; p.rz += (tz-p.rz)*k;                     // ease toward it (no snap)
+          var rt=Date.now()-115;                       // render ~115ms in the past
+          var buf=p.buf;
+          if(buf && buf.length>=2){
+            var a=null,b=null;
+            for(var bi=buf.length-1; bi>0; bi--){ if(buf[bi-1].t<=rt && buf[bi].t>=rt){ a=buf[bi-1]; b=buf[bi]; break; } }
+            if(a&&b){ var f=(rt-a.t)/((b.t-a.t)||1); p.rx=a.x+(b.x-a.x)*f; p.rz=a.z+(b.z-a.z)*f; }
+            else { var nb=buf[buf.length-1]; var dd=DIRS[p.dir]||{x:0,z:0}; var ex=Math.max(0,Math.min(0.12,(Date.now()-nb.t)/1000-0.115));
+              p.rx=nb.x+dd.x*p.speed*ex; p.rz=nb.z+dd.z*p.speed*ex; }
+          } else if(p.rx===undefined){ p.rx=p.x; p.rz=p.z; }
         }
       }
     }

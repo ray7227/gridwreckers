@@ -133,8 +133,16 @@
     animation:flarePulse 1.2s ease-in-out infinite}
   @keyframes flarePulse{0%,100%{opacity:.15}50%{opacity:.75}}
   body.flare #flare{display:block}
-  body.glitch #gl{animation:glitchShift .18s steps(2) infinite; filter:hue-rotate(40deg) contrast(1.3)}
-  @keyframes glitchShift{0%{transform:translate(0,0)}50%{transform:translate(3px,-2px)}100%{transform:translate(-2px,2px)}}
+  body.glitch #gl{animation:glitchShift .09s steps(2) infinite; filter:hue-rotate(90deg) contrast(1.7) saturate(1.6)}
+  @keyframes glitchShift{0%{transform:translate(0,0)}20%{transform:translate(8px,-5px) skewX(3deg)}40%{transform:translate(-7px,4px)}60%{transform:translate(5px,3px) skewX(-2deg)}80%{transform:translate(-4px,-3px)}100%{transform:translate(6px,-2px)}}
+  body.glitch::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:8;mix-blend-mode:screen;
+    background:repeating-linear-gradient(0deg,rgba(255,0,80,.08) 0 2px,transparent 2px 4px);animation:glScan .2s steps(3) infinite}
+  @keyframes glScan{0%{transform:translateY(0)}100%{transform:translateY(6px)}}
+  #disco{position:fixed;inset:0;pointer-events:none;z-index:6;display:none;mix-blend-mode:screen;
+    background:radial-gradient(circle at 20% 20%,rgba(255,0,170,.5),transparent 40%),radial-gradient(circle at 80% 30%,rgba(0,200,255,.5),transparent 40%),radial-gradient(circle at 50% 80%,rgba(120,255,0,.45),transparent 40%);
+    animation:discoStrobe .28s steps(2) infinite}
+  @keyframes discoStrobe{0%{opacity:.15;transform:scale(1)}50%{opacity:.7;transform:scale(1.05) rotate(3deg)}100%{opacity:.2;transform:scale(1)}}
+  body.disco #disco{display:block}
   #round.show{display:flex}
   #round .big{font-size:clamp(30px,7vw,60px);font-weight:900;transform:skewX(-7deg)}
 
@@ -197,6 +205,7 @@
     </div>
     <div id="ir"><div id="irtxt"></div></div>
     <div id="flare"></div>
+    <div id="disco"></div>
   </div>
 
   <div class="screen" id="menu">
@@ -224,7 +233,7 @@
         <button class="btn pink" id="joinBtn">Join</button>
       </div>
       <div class="row" style="margin-top:14px">
-        <button class="btn ghostbtn" id="testBtn">&#128295; Test lab (try every ability)</button>
+        <button class="btn ghostbtn" id="testBtn" style="display:none">&#128295; Test lab (try every ability)</button>
       </div>
       <div class="err" id="menuErr"></div>
     </div>
@@ -375,6 +384,7 @@ function show(id){
   });
 })();
 el('nameIn').value = 'Rider';
+el('nameIn').addEventListener('input', function(){ el('testBtn').style.display = (this.value.trim().toUpperCase()==='GOD') ? 'block' : 'none'; });
 
 (function(){
   var row=el('diffRow'); var keys=['chill','normal','hard','insane'];
@@ -428,7 +438,10 @@ function startMatchMusic(idx){
     bgAudio.onended=function(){ var ni=Math.floor(Math.random()*SONGS.length); if(SONGS.length>1){ while(ni===S._matchIdx) ni=Math.floor(Math.random()*SONGS.length); } startMatchMusic(ni); };
     if(musicOn) bgAudio.play().catch(function(){}); }catch(e){ bgAudio=null; }
 }
-function ensureMatchMusic(){ if(!S._matchStarted){ startMatchMusic(S._matchIdx); S._matchStarted=true; } S._wantMusic=true; }
+function ensureMatchMusic(){ stopMenuMusic(); if(!S._matchStarted){ startMatchMusic(S._matchIdx); S._matchStarted=true; } S._wantMusic=true; }
+var menuAudio=null;
+function startMenuMusic(){ if(S.screen!=='menu'||!musicOn) return; if(!menuAudio){ try{ menuAudio=new Audio('Start%20up.wav'); menuAudio.loop=true; menuAudio.volume=0.55; }catch(e){ return; } } if(menuAudio.paused) menuAudio.play().catch(function(){}); }
+function stopMenuMusic(){ if(menuAudio){ try{ menuAudio.pause(); }catch(e){} } }
 function tryUnlock(){ if(bgAudio && musicOn && bgAudio.paused && !musicShouldDuck()){ bgAudio.play().catch(function(){}); } }
 function musicShouldDuck(){
   if(eagleSongOn) return true;
@@ -441,7 +454,7 @@ function updateMusic(){
   if(!bgAudio){ startMatchMusic(S._matchIdx); return; }
   if(bgAudio.paused) bgAudio.play().catch(function(){});
 }
-document.addEventListener('pointerdown', tryUnlock);
+document.addEventListener('pointerdown', function(){ tryUnlock(); startMenuMusic(); });
 document.addEventListener('keydown', tryUnlock);
 el('mute').onclick = function(){
   musicOn=!musicOn;
@@ -1037,16 +1050,28 @@ var Game = {
   stepGlobals:function(t,dt){
     if(S.global.disco>0){
       var h=(t*0.6)%1; var col=new THREE.Color().setHSL(h,1,0.5);
-      this.scene.background.copy(col).multiplyScalar(0.25);
+      this.scene.background.copy(col).multiplyScalar(0.06);          // dark disco room
+      if(this.sky) this.sky.visible=false; if(this.skyline) this.skyline.visible=false;
+      if(this.floorMesh) this.floorMesh.material.color.copy(new THREE.Color().setHSL((h+0.5)%1,1,0.5)).multiplyScalar(0.5);
       for(var id in S.players){ var p=S.players[id]; if(p.trailMat){ var hh=(h+id*0.3)%1;
         p.trailMat.color.setHSL(hh,1,0.6); if(p.trailTop) p.trailTop.color.setHSL(hh,1,0.75); } }
-    } else if(S.global.moon>0){
-      this.scene.background.setHex(0x0a1030);
+      // strobing colored spotlights sweeping the arena
+      if(!this.discoLights){ this.discoLights=[]; for(var d=0;d<5;d++){ var sl=new THREE.PointLight(0xffffff, 3, 400); this.scene.add(sl); this.discoLights.push(sl); } }
+      for(var d2=0;d2<this.discoLights.length;d2++){ var L=this.discoLights[d2]; var a=t*1.6+d2*1.25;
+        L.position.set(Math.cos(a)*HALF*0.7, 60, Math.sin(a)*HALF*0.7); L.color.setHSL((h+d2*0.2)%1,1,0.5);
+        L.intensity = (Math.sin(t*22+d2)>0)?4:0.4; }
+      document.body.classList.add('disco');
     } else {
-      this.scene.background.setHex(0x04040c);
-      for(var id2 in S.players){ var pp=S.players[id2];
-        if(pp.trailMat && pp._restored!==pp.color){ pp.trailMat.color.setHex(pp.color);
-          if(pp.trailTop) pp.trailTop.color.setHex(pp.color); pp._restored=pp.color; } }
+      if(this.discoLights){ for(var dl=0;dl<this.discoLights.length;dl++) this.discoLights[dl].intensity=0; }
+      document.body.classList.remove('disco');
+      var dk=eventActive('blackout')||eventActive('nightmare');
+      if(this.sky) this.sky.visible=!dk; if(this.skyline) this.skyline.visible=!dk;
+      if(this.floorMesh) this.floorMesh.material.color.setScalar(dk?0.16:1);
+      if(S.global.moon>0){ this.scene.background.setHex(0x0a1030); }
+      else { this.scene.background.setHex(dk?0x000006:0x04040c);
+        for(var id2 in S.players){ var pp=S.players[id2];
+          if(pp.trailMat && pp._restored!==pp.color){ pp.trailMat.color.setHex(pp.color);
+            if(pp.trailTop) pp.trailTop.color.setHex(pp.color); pp._restored=pp.color; } } }
     }
     if(S.global.disco>0){ for(var id3 in S.players){ S.players[id3]._restored=-1; } }
   },
@@ -1395,8 +1420,12 @@ function stepCannons(dt){
     if(Math.abs(q.x)>HALF-2||Math.abs(q.z)>HALF-2) hit=true;
     for(var id in S.players){ var o=S.players[id]; if(!o.pts)continue; var pts=o.pts,n=pts.length,head={x:o.x,z:o.z};
       for(var j=0;j<n;j++){var a=pts[j],b=(j<n-1)?pts[j+1]:head;if(distSeg(q.x,q.z,a.x,a.z,b.x,b.z)<2.2&&!inBlastHole(q.x,q.z)){hit=true;break;}} if(hit)break; }
-    if(hit){ if(q.big) bigExplode(q.x,q.z,q.owner); else blastWall(q.x,q.z,q.owner); S.cannonShots.splice(i,1);}
-    else if(q.life<=0){ if(q.big) bigExplode(q.x,q.z,q.owner); S.cannonShots.splice(i,1); }
+    if(!q.mesh && Game.scene){ q.mesh=new THREE.Mesh(new THREE.SphereGeometry(q.big?2.2:1.4,10,8), new THREE.MeshBasicMaterial({color:0xffd24a})); Game.scene.add(q.mesh);
+      q.glow=new THREE.PointLight(0xffa020, 2, 40); Game.scene.add(q.glow); }
+    if(q.mesh){ q.mesh.position.set(q.x, groundHeight(q.x,q.z)+2.4, q.z); if(q.glow) q.glow.position.copy(q.mesh.position); }
+    if(hit || q.life<=0){ if(q.big) bigExplode(q.x,q.z,q.owner); else if(hit) blastWall(q.x,q.z,q.owner);
+      if(q.mesh){ Game.scene.remove(q.mesh); if(q.mesh.geometry)q.mesh.geometry.dispose(); } if(q.glow) Game.scene.remove(q.glow);
+      S.cannonShots.splice(i,1); }
   }
 }
 
@@ -1561,37 +1590,38 @@ function applyViewFx(dt){
   // EMP — all trails vanish visually but stay deadly
   var emp = eventActive('emp');
   for(var eid in S.players){ var ep=S.players[eid]; if(ep.trailGroup) ep.trailGroup.visible=!emp; if(ep.liveGroup) ep.liveGroup.visible=!emp; }
-  // FAKE TRAILS — phantom walls around me (no collision)
-  if(!Game.fakeGroup){ Game.fakeGroup=new THREE.Group(); Game.scene.add(Game.fakeGroup); Game._fakeT=0; }
-  if(me && me.fx.faketr>0){ Game._fakeT-=dt;
-    if(Game._fakeT<=0){ Game._fakeT=1.1; Game.clearGroup(Game.fakeGroup);
-      for(var i=0;i<8;i++){ var ax=me.x+(Math.random()*2-1)*70, az=me.z+(Math.random()*2-1)*70;
-        var hor=Math.random()<0.5, len=20+Math.random()*30;
+  // FAKE TRAILS — a dense phantom field that pops up once and stays for the duration (no collision)
+  if(!Game.fakeGroup){ Game.fakeGroup=new THREE.Group(); Game.scene.add(Game.fakeGroup); Game._fakeOn=false; }
+  if(me && me.fx.faketr>0){
+    if(!Game._fakeOn){ Game._fakeOn=true; Game.clearGroup(Game.fakeGroup);
+      for(var i=0;i<70;i++){ var ax=(Math.random()*2-1)*(HALF-20), az=(Math.random()*2-1)*(HALF-20);
+        var hor=Math.random()<0.5, len=20+Math.random()*60;
         var bx=hor?ax+len:ax, bz=hor?az:az+len;
-        var m=new THREE.Mesh(new THREE.BoxGeometry(hor?len:0.7,WALL_H,hor?0.7:len), new THREE.MeshBasicMaterial({color:0x8affc8, transparent:true, opacity:0.35}));
+        var m=new THREE.Mesh(new THREE.BoxGeometry(hor?len:0.7,WALL_H,hor?0.7:len), new THREE.MeshBasicMaterial({color:0x8affc8, transparent:true, opacity:0.4}));
         m.position.set((ax+bx)/2, WALL_H/2, (az+bz)/2); Game.fakeGroup.add(m); }
     }
-  } else if(Game.fakeGroup.children.length){ Game.clearGroup(Game.fakeGroup); }
-  // CLONE ARMY — I (enemy) see fake copies of any OTHER rider who cast it
+  } else if(Game._fakeOn){ Game._fakeOn=false; Game.clearGroup(Game.fakeGroup); }
+  // CLONE ARMY — 30 fake copies with continuous trails
   Game.cloneGroups=Game.cloneGroups||{};
+  var CLONES=30;
   for(var id in S.players){ var p=S.players[id];
     var show = p.alive && p.fx.clone>0;
     var cg=Game.cloneGroups[id];
     if(show){
       if(!cg){ cg={group:new THREE.Group(), bikes:[]}; Game.scene.add(cg.group);
-        for(var c=0;c<5;c++){ var bk=Game.bikeMesh(p.color); cg.group.add(bk);
-          cg.bikes.push({mesh:bk, x:p.x, z:p.z, dir:CW[Math.floor(Math.random()*4)], t:0}); }
+        for(var c=0;c<CLONES;c++){ var bk=Game.bikeMesh(p.color); cg.group.add(bk);
+          cg.bikes.push({mesh:bk, x:p.x+(Math.random()*2-1)*80, z:p.z+(Math.random()*2-1)*80, dir:CW[Math.floor(Math.random()*4)], t:Math.random()}); }
         Game.cloneGroups[id]=cg;
       }
       for(var b=0;b<cg.bikes.length;b++){ var cb=cg.bikes[b]; cb.t-=dt;
-        if(cb.t<=0){ cb.t=0.4+Math.random()*0.8; var li=CW.indexOf(cb.dir); cb.dir=CW[(li+(Math.random()<0.5?1:3))%4]; }
+        if(cb.t<=0){ cb.t=0.5+Math.random()*1.1; var li=CW.indexOf(cb.dir); cb.dir=CW[(li+(Math.random()<0.5?1:3))%4]; }
         var dd=DIRS[cb.dir]; var ox=cb.x, oz=cb.z; cb.x+=dd.x*BASE_SPEED*dt; cb.z+=dd.z*BASE_SPEED*dt;
         cb.x=Math.max(-HALF+2,Math.min(HALF-2,cb.x)); cb.z=Math.max(-HALF+2,Math.min(HALF-2,cb.z));
         cb.mesh.position.set(cb.x, groundHeight(cb.x,cb.z), cb.z); cb.mesh.rotation.y=Math.atan2(dd.x,dd.z);
-        cb.dr=(cb.dr||0)-dt; if(cb.dr<=0){ cb.dr=0.12; var seg=new THREE.Mesh(new THREE.BoxGeometry(0.55,WALL_H,Math.max(0.5,Math.hypot(cb.x-ox,cb.z-oz)+0.5)),
-          new THREE.MeshBasicMaterial({color:p.color, transparent:true, opacity:0.3}));
+        var segLen=Math.hypot(cb.x-ox,cb.z-oz); if(segLen>0.2){ var seg=new THREE.Mesh(new THREE.BoxGeometry(0.5,WALL_H,segLen+0.6),
+          new THREE.MeshBasicMaterial({color:p.color, transparent:true, opacity:0.32}));
           seg.position.set((cb.x+ox)/2, groundHeight(cb.x,cb.z)+WALL_H/2, (cb.z+oz)/2); seg.rotation.y=Math.atan2(dd.x,dd.z); cg.group.add(seg);
-          while(cg.group.children.length>5+140){ var old=cg.group.children[5]; cg.group.remove(old); if(old.geometry)old.geometry.dispose(); }
+          while(cg.group.children.length>CLONES+900){ var old=cg.group.children[CLONES]; cg.group.remove(old); if(old.geometry)old.geometry.dispose(); }
         }
       }
     } else if(cg){ Game.scene.remove(cg.group); Game.clearGroup(cg.group); delete Game.cloneGroups[id]; }
@@ -1656,7 +1686,7 @@ function stepHazards(dt){
 function stepPlayer(p, dt){
   if(!p.alive) return;
   if(p.id===S.me && !p.isAI) applyTurn(p);   // flush buffered turn as soon as cooldown allows
-  ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun','pacman','reverse','quake','fog','faketr','clone','evilclone']
+  ['nitro','ghost','shield','eagle','kaiju','tiny','bullet','rocket','ac130','stun','pacman','reverse','quake','fog','faketr','clone']
     .forEach(function(k){ if(p.fx[k]>0) p.fx[k]=Math.max(0,p.fx[k]-dt); });
   // lock wall size per-segment: when size mode changes, seal the current segment at its size
   var cmode = p.fx.tiny>0?'tiny':(p.fx.kaiju>0?'kaiju':'normal');
@@ -1713,6 +1743,10 @@ function stepPlayer(p, dt){
       if(climb>7 && !immune && p.y<=0.2){ return killOrShield(p); }   // ran into a cliff face
       p.groundY=tg; p.groundVy=0; }
   } else { p.groundY=0; }
+  // permanent jump arc: while airborne, drop elevated trail points so the path stays up in the air
+  if(p.y>0.4 && p.fx.eagle<=0 && p.fx.rocket<=0 && p.fx.ac130<=0){
+    if(p._airY===undefined || Math.abs(p.y-p._airY)>1.0){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:p.y}); p._builtPts=-1; p._airY=p.y; }
+  } else { if(p._airY!==undefined && p._airY>0.4){ p.pts.push({x:p.x,z:p.z,mode:p.sizeMode,wy:0}); p._builtPts=-1; } p._airY=0; }
   if(!immune){
     if(trailHitSelf(p)){ return killOrShield(p); }
     if(obstacleHit(p.x,p.z)){ return killOrShield(p); }

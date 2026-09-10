@@ -143,6 +143,9 @@
     animation:discoStrobe .28s steps(2) infinite}
   @keyframes discoStrobe{0%{opacity:.15;transform:scale(1)}50%{opacity:.7;transform:scale(1.05) rotate(3deg)}100%{opacity:.2;transform:scale(1)}}
   body.disco #disco{display:block}
+  .kcBanner{position:fixed;top:9%;left:0;right:0;z-index:41;text-align:center;pointer-events:none;font-family:inherit}
+  .kcTitle{font-size:clamp(28px,7vw,64px);font-weight:900;letter-spacing:.18em;color:#ff3050;text-shadow:0 0 24px rgba(255,48,80,.8)}
+  .kcSub{margin-top:6px;font-size:clamp(13px,3vw,22px);letter-spacing:.14em;color:#fff;opacity:.85}
   #round.show{display:flex}
   #round .big{font-size:clamp(30px,7vw,60px);font-weight:900;transform:skewX(-7deg)}
 
@@ -1213,7 +1216,7 @@ function beginGame(){
 // start the first game, or just reset for a rematch if the game is already live
 function newRound(){
   if(!S.running){ beginGame(); return; }
-  if((S.scores[1]||0)>=3 || (S.scores[2]||0)>=3){ S.scores={1:0,2:0}; if(!(S.mode==='online'&&!S.host)) newMatchMusic(); }  // new match
+  if((S.scores[1]||0)>=3 || (S.scores[2]||0)>=3){ S.scores={1:0,2:0}; S.clips=[]; if(!(S.mode==='online'&&!S.host)) newMatchMusic(); }  // new match
   S.over=false;
   resetRound(false);
 }
@@ -1269,7 +1272,7 @@ function resetRound(bump){
     if(p.mesh){ p.mesh.position.set(p.x,0,p.z); p.mesh.scale.set(1,1,1); p.mesh.visible=true; }
     if(p.eagle) p.eagle.visible=false;
   }
-  S.global={moon:0,disco:0}; S.peels=[]; S.roundTime=0; S.blastHoles=[]; S.cannonShots=[];
+  S.global={moon:0,disco:0}; S.peels=[]; S.roundTime=0; S.blastHoles=[]; S.cannonShots=[]; S.rec=[];
   S.meteor=0; S.bh=null; S.boulder=null; S.tornado=null;
   // active events carry over into the new round; re-apply their setup so positions are fresh
   S.shrink=0; S.speedMul=1;
@@ -1870,6 +1873,62 @@ function rocketSlam(p){
   if(p.id===S.me) shake(1.4);
 }
 
+// ============================================================
+// KILLCAM — record recent positions, replay the death cinematically
+// ============================================================
+function recordFrame(){
+  if(!S.rec) S.rec=[];
+  var ps=[]; for(var id in S.players){ var p=S.players[id]; ps.push({i:p.id, x:p.x, z:p.z, a:p.alive, c:p.color, n:p.name}); }
+  S.rec.push({ps:ps}); if(S.rec.length>240) S.rec.shift();
+}
+function buildClip(){
+  var victim=null; for(var id in S.players){ if(!S.players[id].alive){ victim=S.players[id]; break; } }
+  return { frames:(S.rec||[]).slice(), victim: victim?victim.id:null, victimName: victim?victim.name:'' };
+}
+var Killcam={
+  playing:false, fwd:{x:0,z:1},
+  play:function(clip, done, label){
+    if(!clip || !clip.frames || clip.frames.length<3 || !Game.scene){ if(done) done(); return; }
+    this.clip=clip; this.done=done; this.playing=true; S.replaying=true;
+    this.camX=undefined; this.camZ=undefined; this.ang0=Math.random()*6.28;
+    var b=document.createElement('div'); b.className='kcBanner';
+    b.innerHTML='<div class="kcTitle">'+(label||'REPLAY')+'</div><div class="kcSub">'+((clip.victimName||'')+' WRECKED').trim()+'</div>';
+    document.body.appendChild(b); this._banner=b;
+    this.N=clip.frames.length; this.DUR=Math.min(8, Math.max(4, this.N*0.05)); this.start=performance.now();
+    var self=this;
+    function fr(){ if(!self.playing) return; var e=(performance.now()-self.start)/1000, prog=Math.min(1,e/self.DUR);
+      self.step(prog); Game.renderer.render(Game.scene, Game.camera);
+      if(prog<1) requestAnimationFrame(fr); else { self.stop(); if(self.done) self.done(); } }
+    requestAnimationFrame(fr);
+  },
+  stop:function(){ this.playing=false; S.replaying=false; Game.camera.up.set(0,1,0); if(this._banner){ this._banner.remove(); this._banner=null; } },
+  playMontage:function(clips, done){ var self=this, i=0; function next(){ if(i>=clips.length){ if(done) done(); return; } self.play(clips[i++], next, 'MATCH RECAP'); } next(); },
+  step:function(prog){
+    var clip=this.clip, frames=clip.frames, N=this.N;
+    var ft=prog*(N-1), fi=Math.floor(ft), frac=ft-fi, f0=frames[fi], f1=frames[Math.min(N-1,fi+1)];
+    var vic=null;
+    for(var j=0;j<f0.ps.length;j++){ var a=f0.ps[j], bm=null;
+      for(var m=0;m<f1.ps.length;m++){ if(f1.ps[m].i===a.i){ bm=f1.ps[m]; break; } }
+      var x=a.x+(bm?(bm.x-a.x)*frac:0), z=a.z+(bm?(bm.z-a.z)*frac:0);
+      var hx=bm?(bm.x-a.x):0, hz=bm?(bm.z-a.z):0;
+      var pl=S.players[a.i];
+      if(pl&&pl.mesh){ pl.mesh.visible=true; pl.mesh.position.set(x, groundHeight(x,z), z); if(hx||hz) pl.mesh.rotation.y=Math.atan2(hx,hz); }
+      if(a.i===clip.victim){ vic={x:x,z:z}; }
+    }
+    if(vic){
+      if(this.camX===undefined){ this.camX=vic.x; this.camZ=vic.z; }
+      this.camX += (vic.x-this.camX)*0.05; this.camZ += (vic.z-this.camZ)*0.05;   // floaty follow
+      var gy=groundHeight(vic.x,vic.z);
+      var ang=this.ang0 + prog*0.5;                       // slow cinematic drift
+      var dist=120 - prog*55, height=95 - prog*35;         // ease in over the run
+      Game.camera.up.set(0,1,0);
+      Game.camera.position.set(this.camX+Math.sin(ang)*dist, gy+height, this.camZ+Math.cos(ang)*dist);
+      Game.camera.lookAt(this.camX, gy+2, this.camZ);
+      Game.camera.fov=58; Game.camera.updateProjectionMatrix();
+    }
+  }
+};
+
 function checkRoundEnd(){
   if(S.over) return;
   if(S.test){ setTimeout(function(){ if(S.test && !S.over) resetRound(false); }, 700); return; }
@@ -1879,9 +1938,14 @@ function checkRoundEnd(){
     S.over=true; S.running=true;
     var winner = alive[0];
     if(winner){ S.scores[winner.id]=(S.scores[winner.id]||0)+1; }
-    showRoundOver(winner);
+    var matchWinner = winner && (S.scores[winner.id]||0)>=3;
+    var clip=buildClip(); S.clips=S.clips||[]; S.clips.push(clip);
+    Killcam.play(clip, function(){
+      if(matchWinner) Killcam.playMontage(S.clips, function(){ showRoundOver(winner); });
+      else showRoundOver(winner);
+    });
   } else if(total===1 && alive.length===0){
-    S.over=true; showRoundOver(null);
+    S.over=true; var clip0=buildClip(); Killcam.play(clip0, function(){ showRoundOver(null); });
   }
 }
 
@@ -1990,6 +2054,7 @@ var last=0;
 function loop(t){
   var now=t/1000; var dt=Math.min(0.05, (now-last)||0.016); last=now;
   if(S.screen!=='hud'){ requestAnimationFrame(loop); return; }
+  if(S.replaying){ requestAnimationFrame(loop); return; }   // killcam drives camera + render
 
   if(!S.over){
     S.roundTime+=dt;
@@ -2012,6 +2077,7 @@ function loop(t){
   }
 
   stepCannons(dt);
+  if(!S.over){ S._recT=(S._recT||0)-dt; if(S._recT<=0){ S._recT=0.05; recordFrame(); } }
   if(!S.over) stepHazards(dt);
   if(!S.over) stepEvents(dt);
   applyViewFx(dt);

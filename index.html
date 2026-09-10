@@ -2075,11 +2075,21 @@ var Killcam={
     if(!this.rGroup){ this.rGroup=new THREE.Group(); Game.scene.add(this.rGroup); }
     this.clearG(this.rGroup); this.paths={}; this.rBuilt={};
     for(var fk=0;fk<clip.frames.length;fk++){ var ffk=clip.frames[fk]; for(var jk=0;jk<ffk.ps.length;jk++){ var ppk=ffk.ps[jk]; (this.paths[ppk.i]=this.paths[ppk.i]||[]).push({x:ppk.x,z:ppk.z,c:ppk.c}); } }
-    this.N=clip.frames.length; this.DUR=Math.min(8, Math.max(4, this.N*0.05)); this.start=performance.now();
+    this.N=clip.frames.length;
+    var realDur=this.N*0.05;                          // recorded seconds
+    this.slowFootage=Math.min(2, realDur*0.5);         // last ~2s of footage
+    this.fastFootage=realDur-this.slowFootage;
+    this.fastTime=Math.min(4.5, Math.max(1.5, this.fastFootage*0.5));  // compress the lead-up
+    this.slowRate=0.3;                                 // 30% speed for the crash
+    this.slowTime=this.slowFootage/this.slowRate;
+    this.realDur=realDur; this.start=performance.now();
     var self=this;
-    function fr(){ if(!self.playing) return; var e=(performance.now()-self.start)/1000, prog=Math.min(1,e/self.DUR);
+    function fr(){ if(!self.playing) return; var e=(performance.now()-self.start)/1000;
+      var rt = (e<self.fastTime) ? (e/self.fastTime)*self.fastFootage
+                                 : self.fastFootage + (e-self.fastTime)*self.slowRate;   // remapped footage time
+      var prog=Math.min(1, rt/self.realDur);
       self.step(prog); Game.renderer.render(Game.scene, Game.camera);
-      if(prog<1) requestAnimationFrame(fr); else { self.stop(); if(self.done) self.done(); } }
+      if(rt < self.realDur) requestAnimationFrame(fr); else { self.stop(); if(self.done) self.done(); } }
     requestAnimationFrame(fr);
   },
   clearG:function(g){ for(var i=g.children.length-1;i>=0;i--){ var c=g.children[i]; g.remove(c); if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose(); } },

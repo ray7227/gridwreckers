@@ -2288,15 +2288,13 @@ function loop(t){
       if(p.isAI){ aiThink(p,dt); stepPlayer(p,dt); }
       else {
         if(p.alive){
-          var rt=Date.now()-115;                       // render ~115ms in the past
-          var buf=p.buf;
-          if(buf && buf.length>=2){
-            var a=null,b=null;
-            for(var bi=buf.length-1; bi>0; bi--){ if(buf[bi-1].t<=rt && buf[bi].t>=rt){ a=buf[bi-1]; b=buf[bi]; break; } }
-            if(a&&b){ var f=(rt-a.t)/((b.t-a.t)||1); p.rx=a.x+(b.x-a.x)*f; p.rz=a.z+(b.z-a.z)*f; }
-            else { var nb=buf[buf.length-1]; var dd=DIRS[p.dir]||{x:0,z:0}; var ex=Math.max(0,Math.min(0.12,(Date.now()-nb.t)/1000-0.115));
-              p.rx=nb.x+dd.x*p.speed*ex; p.rz=nb.z+dd.z*p.speed*ex; }
-          } else if(p.rx===undefined){ p.rx=p.x; p.rz=p.z; }
+          var d=DIRS[p.dir]||{x:0,z:0};
+          var age=Math.min(0.25,(Date.now()-(p.ts||Date.now()))/1000);
+          var tx=p.x + d.x*p.speed*age, tz=p.z + d.z*p.speed*age;   // where the server says it is now
+          if(p.rx===undefined){ p.rx=tx; p.rz=tz; }
+          p.rx += d.x*p.speed*dt; p.rz += d.z*p.speed*dt;            // keep moving forward smoothly
+          p.rx += (tx-p.rx)*Math.min(1,dt*4);                        // gently correct drift
+          p.rz += (tz-p.rz)*Math.min(1,dt*4);
         }
       }
     }

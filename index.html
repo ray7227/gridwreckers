@@ -182,7 +182,6 @@
       <div style="display:flex;gap:8px;flex-direction:column;align-items:flex-end">
         <div class="pill"><span id="roomTag">SOLO</span></div>
         <div class="pill" id="connPill"><span class="dot" id="connDot"></span><span id="conn">local</span></div>
-        <button class="pill" id="mute" style="pointer-events:auto;cursor:pointer;color:#eaf6ff;font-weight:800">&#9835; music: on</button>
         <button class="pill" id="endBtn" style="pointer-events:auto;cursor:pointer;color:#ff9db0;font-weight:800">&#10005; end game</button>
         <button class="pill" id="talkBtn" style="pointer-events:auto;cursor:pointer;color:#8affc8;font-weight:800;display:none">&#127908; hold to talk</button>
       </div>
@@ -465,7 +464,6 @@ el('rematch').onclick = function(){ if(S.mode==='solo'){ if((S.scores[1]||0)>=3|
 // background music = a random song from the Songs/ folder, chosen per MATCH
 var SONGS=['Songs/Wizards.mp3','Songs/Paradisco.mp3','Songs/Hey%20Baby.mp3','Songs/Cyberpunk.mp3','Songs/Own%20Ghost.mp3','Songs/TENSOR.mp3'];
 var bgAudio=null, musicOn=true;
-function setMuteLabel(){ el('mute').innerHTML = musicOn ? '\u266B music' : '\u266A muted'; }
 function newMatchMusic(){ S._matchIdx = Math.floor(Math.random()*SONGS.length); S._matchStarted=false; clearEvents(); }
 function startMatchMusic(idx){
   try{ if(bgAudio){ bgAudio.pause(); bgAudio.onended=null; } }catch(e){}
@@ -493,12 +491,6 @@ function updateMusic(){
 }
 document.addEventListener('pointerdown', function(){ tryUnlock(); startMenuMusic(); });
 document.addEventListener('keydown', tryUnlock);
-el('mute').onclick = function(){
-  musicOn=!musicOn;
-  if(bgAudio) bgAudio.muted=!musicOn;
-  if(musicOn) tryUnlock();
-  setMuteLabel();
-};
 el('fpvBtn').onclick = function(){ S.fpv=!S.fpv; el('fpvBtn').textContent='First-person: '+(S.fpv?'ON':'OFF'); el('fpvBtn').classList.toggle('on',S.fpv); };
 
 // ============================================================
@@ -810,7 +802,7 @@ function buildLab(){
   }
   label('EARLY 0-1min:'); ['cannon','jump','wipe','shield','ghost','nitro','disco'].forEach(chip);
   label('LATE 1min+:'); ['ufo','bullet','rocket','tiny','airturn','doublejump'].forEach(chip);
-  label('RARE 45s+ (20%):'); ['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone','evilclone'].forEach(chip);
+  label('LEGENDARY 30s+:'); ['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone','evilclone'].forEach(chip);
   var reset=document.createElement('div'); reset.className='tt'; reset.textContent='\u21BB RESET';
   reset.onclick=function(){ resetRound(false); }; strip.appendChild(reset);
   label('EVENTS:');
@@ -1412,7 +1404,7 @@ function newRound(){
 
 function seedPowerups(){
   S.powerups=[]; S.consumed={}; S.roundTime=0; S.blastHoles=[]; S.cannonShots=[];
-  S._nextSpawn=undefined;   // first fill happens at 15s
+  S._nextSpawn=undefined; S._nextLeg=undefined;   // first fill at 10s, first legendary roll at 30s
 }
 function chaosLevel(){ return Math.min(1,S.roundTime/95); }
 
@@ -1420,6 +1412,14 @@ var REG_EARLY=['cannon','jump','wipe','shield','ghost','nitro','disco'];
 var REG_LATE =['cannon','jump','wipe','shield','ghost','nitro','disco','ufo','bullet','rocket','tiny','airturn','doublejump'];
 var LEGEND3  =['eagle','kaiju','ac130','meteor','blackhole','boulder','tornado','pacman','evilclone','reverse','quake','fog','faketr','clone','evilclone'];
 var LEGEND3_SET={eagle:1,kaiju:1,ac130:1,meteor:1,blackhole:1,boulder:1,tornado:1,pacman:1,evilclone:1,reverse:1,quake:1,fog:1,faketr:1,clone:1};
+// chance of each legendary spawning per roll (rolls at 30s, then every 15s). Edit these to tune rarity.
+var LEGEND_ODDS={eagle:0.0233, kaiju:0.0233, ac130:0.0233, meteor:0.0233, blackhole:0.0233, boulder:0.0233, tornado:0.0233,
+  pacman:0.0233, evilclone:0.0367, reverse:0.0233, quake:0.0233, fog:0.0233, faketr:0.0233, clone:0.0233};
+function rollLegendary(){
+  if(mapCount(function(p){ return LEGEND3_SET[p.type]; })>=1) return;   // only one legendary on the map at a time
+  var r=rng(), acc=0;
+  for(var k in LEGEND_ODDS){ acc+=LEGEND_ODDS[k]; if(r<acc){ spawnPU(k); return; } }
+}
 
 function spawnPU(forced){
   var t=forced || REG_EARLY[Math.floor(rng()*REG_EARLY.length)];
@@ -1432,16 +1432,17 @@ function spawnRefill(){
   var pool = S.roundTime<30 ? REG_EARLY : REG_LATE;
   var regN = mapCount(function(p){ return !LEGEND3_SET[p.type]; });
   while(regN<4){ spawnPU(pool[Math.floor(rng()*pool.length)]); regN++; }        // keep 4 on the map
-  if(S.roundTime>=30){
-    var legN = mapCount(function(p){ return LEGEND3_SET[p.type]; });
-    if(legN<1 && rng()<0.20){ spawnPU(LEGEND3[Math.floor(rng()*LEGEND3.length)]); } // 20% rare 3rd
-  }
 }
 function spawnManager(dt){
   if(S.roundTime<10) return;                 // nothing for the first 10s
   if(S._nextSpawn===undefined) S._nextSpawn=0;
   S._nextSpawn-=dt;
-  if(S._nextSpawn<=0){ S._nextSpawn=15; spawnRefill(); }   // fill at 15s, then refill every 15s
+  if(S._nextSpawn<=0){ S._nextSpawn=15; spawnRefill(); }   // fill at 10s, then refill every 15s
+  if(S.roundTime>=30){                                       // legendary roll at 30s, then every 15s
+    if(S._nextLeg===undefined) S._nextLeg=0;
+    S._nextLeg-=dt;
+    if(S._nextLeg<=0){ S._nextLeg=15; rollLegendary(); }
+  }
 }
 
 function resetRound(bump){
@@ -2213,7 +2214,8 @@ function checkRoundEnd(){
     if(winner){ S.scores[winner.id]=(S.scores[winner.id]||0)+1; }
     var matchWinner = winner && (S.scores[winner.id]||0)>=3;
     var clip=buildClip(); S.clips=S.clips||[]; S.clips.push(clip);
-    if(matchWinner){ Killcam.playMontage(S.clips, function(){ showRoundOver(winner); }); }
+    if(matchWinner){ sfxFile([SND_WIN1,SND_WIN2][Math.floor(Math.random()*2)]);   // play now so everyone hears it, even if the host starts the next match mid-replay
+      Killcam.playMontage(S.clips, function(){ showRoundOver(winner); }); }
     else { Killcam.play(clip, function(){ showRoundOver(winner); }); }
   } else if(total===1 && alive.length===0){
     S.over=true; var clip0=buildClip(); Killcam.play(clip0, function(){ showRoundOver(null); });
@@ -2223,7 +2225,6 @@ function checkRoundEnd(){
 function showRoundOver(winner){
   var meWon = winner && winner.id===S.me;
   var matchWinner = winner && (S.scores[winner.id]||0) >= 3;
-  if(matchWinner){ sfxFile([SND_WIN1,SND_WIN2][Math.floor(Math.random()*2)]); }
   el('round').classList.add('show');
   if(matchWinner){
     el('roundText').textContent = meWon ? 'YOU WIN THE MATCH!' : (winner.name+' WINS THE MATCH');
@@ -2423,7 +2424,8 @@ function loop(t){
     // remote SFX for eagle/kaiju activation
     if(pp!==S.players[S.me]){
       if(pp.fx.eagle>0 && !pp._we){ eagleFX(rx,rz); } pp._we=pp.fx.eagle>0;
-      if(pp.fx.kaiju>0 && !pp._wk){ kaijuFX(rx,rz); } pp._wk=pp.fx.kaiju>0;
+      if(pp.fx.kaiju>0 && !pp._wk){ kaijuFX(rx,rz); if(!pp.isAI) sfxFile(SND_KAIJU); } pp._wk=pp.fx.kaiju>0;
+      if(pp.fx.clone>0 && !pp._wcl && !pp.isAI){ sfxFile(SND_CLONE); } pp._wcl=pp.fx.clone>0;
       if(pp.fx.ac130>0 && !pp._wac && !pp.isAI){ sfxFile(AC_START); } pp._wac=pp.fx.ac130>0;
     }
   }
@@ -2538,7 +2540,25 @@ function stopEagleSong(){ if(!eagleSongOn) return; eagleSongOn=false;
 // one-shot sound files (overlap-safe: fresh element each call)
 var AC_START='AC130_START.wav', AC_EXPLODE='AC130%20Explode.wav';
 var SND_CLONE='Sounds/Mark_Builder.wav', SND_KAIJU='Sounds/Jordan_build.wav', SND_WIN1='Sounds/Jordan_Sweat.wav', SND_WIN2='Sounds/Bo_Fuck.wav';
-function sfxFile(url){ try{ var a=new Audio(url); a.volume=0.9; a.play().catch(function(){}); }catch(e){} }
+var SFX_CACHE={};
+function loadSfx(url){ if(!Music.ctx || (url in SFX_CACHE)) return; SFX_CACHE[url]='loading';
+  fetch(url).then(function(r){ if(!r.ok) throw 0; return r.arrayBuffer(); })
+    .then(function(b){ return new Promise(function(res,rej){ Music.ctx.decodeAudioData(b,res,rej); }); })
+    .then(function(buf){ SFX_CACHE[url]=buf; }).catch(function(){ SFX_CACHE[url]=null; }); }
+function sfxFile(url){
+  var buf=SFX_CACHE[url];
+  if(Music.ctx && buf && buf!=='loading'){
+    try{ if(Music.ctx.state==='suspended') Music.ctx.resume();
+      var src=Music.ctx.createBufferSource(), g=Music.ctx.createGain(); g.gain.value=0.9;
+      src.buffer=buf; src.connect(g); g.connect(Music.ctx.destination); src.start(); return; }catch(e){}
+  }
+  try{ var a=new Audio(url); a.volume=0.9; a.play().catch(function(){}); }catch(e){}   // fallback
+}
+// first tap/click unlocks audio and preloads every sound file
+function unlockSfx(){ Music.init(); if(!Music.ctx) return; if(Music.ctx.state==='suspended') Music.ctx.resume();
+  [AC_START,AC_EXPLODE,SND_CLONE,SND_KAIJU,SND_WIN1,SND_WIN2].forEach(loadSfx); }
+document.addEventListener('pointerdown', unlockSfx);
+document.addEventListener('keydown', unlockSfx);
 function kaijuFX(x,z){
   Music.sfx('kaiju');
   toast('\uD83E\uDD96 KAIJU RAMPAGE', '#7bff5a', 1400); flash('#7bff5a'); shake(1.2);

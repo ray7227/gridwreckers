@@ -263,7 +263,7 @@
   </div>
 </div>
 
-<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (function(){
@@ -351,6 +351,17 @@ var S = {
 };
 
 function rng(){ S.seed = (S.seed*1103515245 + 12345) & 0x7fffffff; return S.seed/0x7fffffff; }
+
+// every effect timer at zero (fills in effects a remote rider didn't send)
+function blankFx(){ return { nitro:0, ghost:0, jump:0, shield:0, eagle:0, kaiju:0, tiny:0, banana:0, bullet:0, rocket:0, spin:0, stun:0, pacman:0, reverse:0, quake:0, fog:0, faketr:0, clone:0, evilclone:0, ac130:0 }; }
+// add a remote rider's craters without wiping out our own
+function mergeHoles(list){
+  for(var i=0;i<list.length;i++){ var h=list[i], found=false;
+    for(var j=0;j<S.blastHoles.length;j++){ var m=S.blastHoles[j];
+      if(Math.abs(m.x-h.x)<1 && Math.abs(m.z-h.z)<1){ if((h.depth||0)>(m.depth||0)) m.depth=h.depth; if(h.r>m.r) m.r=h.r; found=true; break; } }
+    if(!found){ S.blastHoles.push({x:h.x,z:h.z,r:h.r,depth:h.depth}); if(S.blastHoles.length>60) S.blastHoles.shift(); }
+  }
+}
 
 function newPlayer(id, color, name){
   return {
@@ -512,7 +523,7 @@ var Net = {
       clientId:'gw_'+Math.random().toString(16).slice(2)});
     this.client.on('connect', function(){
       self.connected=true;
-      self.client.subscribe(self.base+'/#',{qos:0}, function(){
+      self.client.subscribe(self.base+'/#',{qos:1}, function(){
         if(asHost){ self.sayHello(); lobbyStatus('Room live \u2014 share the link, waiting for riders...'); if(S.screen==='hud') self.beginSend(); }
         else { lobbyStatus('On the relay, finding a seat...'); setTimeout(function(){ self.assignSeat(); }, 800); }
       });
@@ -534,18 +545,38 @@ var Net = {
   },
   sayHello:function(){ if(!S.me) return; var p=S.players[S.me]; if(!p) return;
     this.pub('hello/'+S.me, {t:'hello',from:S.me,n:p.name,c:p.color}, true); },
-  pub:function(sub,obj,retain){
-    if(this.client&&this.connected){ try{ this.client.publish(this.base+'/'+sub, JSON.stringify(obj), {retain:!!retain,qos:0}); }catch(e){} }
+  pub:function(sub,obj,retain,qos){
+    if(this.client&&this.connected){ try{ this.client.publish(this.base+'/'+sub, JSON.stringify(obj), {retain:!!retain,qos:qos||0}); }catch(e){} }
   },
   beginSend:function(){
     var self=this; if(this.sendT||!S.me) return;
     this.sendT=setInterval(function(){ self.pub('state/'+S.me, self.state(), false); }, 66);
-    if(S.host) this.puT=setInterval(function(){ self.pub('pu', {t:'pu',from:S.me,list:S.powerups,seed:S.seed,round:S.round}, true); }, 350);
+    if(S.host) this.puT=setInterval(function(){
+      var s=JSON.stringify(S.powerups), now=Date.now();
+      if(s===self._lastPU && now-(self._lastPUt||0)<4000) return;   // only resend when it changes (or every 4s)
+      self._lastPU=s; self._lastPUt=now;
+      self.pub('pu', {t:'pu',from:S.me,list:S.powerups,seed:S.seed,round:S.round}, true); }, 500);
   },
+  // small position packet 15x/sec; the big stuff (trail, craters, name) only when it changes or ~2x/sec
   state:function(){
     var p=S.players[S.me]; if(!p) return {t:'state',from:S.me};
-    return {t:'state', from:S.me, n:p.name, c:p.color, pts:p.pts, x:p.x, z:p.z, dir:p.dir, alive:p.alive, rd:S.round, fp:S.fpv,
-      fx:p.fx, upgrades:p.upgrades, sc:S.scores[S.me]||0, cons:p.consumedLocal, holes:S.blastHoles};
+    var r1=function(v){ return Math.round((v||0)*10)/10; };
+    this._n=(this._n||0)+1;
+    var full=(this._n%8===0);
+    var msg={t:'state', from:S.me, x:r1(p.x), z:r1(p.z), dir:p.dir, alive:p.alive, rd:S.round,
+      sp:Math.round(p.speed||0), y:r1(p.y), sc:S.scores[S.me]||0};
+    var fx={}; for(var k in p.fx){ if(p.fx[k]>0) fx[k]=r1(p.fx[k]); } msg.fx=fx;
+    if(full || p.pts.length!==this._ptsLen){
+      this._ptsLen=p.pts.length;
+      msg.pts=p.pts.map(function(q){ var o={x:r1(q.x), z:r1(q.z)}; if(q.brk) o.brk=1; if(q.mode && q.mode!=='normal') o.mode=q.mode; if(q.wy) o.wy=r1(q.wy); return o; });
+    }
+    if(full || S.blastHoles.length!==this._holesLen){
+      this._holesLen=S.blastHoles.length;
+      msg.holes=S.blastHoles.map(function(h){ return {x:r1(h.x), z:r1(h.z), r:r1(h.r), depth:r1(h.depth)}; });
+    }
+    if(full){ msg.n=p.name; msg.c=p.color; msg.fp=!!S.fpv; msg.upgrades=p.upgrades; }
+    if(p.consumedLocal && Object.keys(p.consumedLocal).length) msg.cons=p.consumedLocal;
+    return msg;
   },
   onMsg:function(topic,payload){
     var parts=topic.split('/'), kind=parts[2], id=parts[3]?parseInt(parts[3]):0;
@@ -554,9 +585,11 @@ var Net = {
     if(kind==='hello'){
       if(id){ this._seen[id]=true;
         if(id!==S.me){
-          if(!S.players[id]){ S.players[id]=newPlayer(id, d.c||COLORS[(id-1)%COLORS.length].hex, d.n); if(Game.scene) Game.spawnMeshes(S.players[id]); }
+          var isNew=!S.players[id];
+          if(isNew){ S.players[id]=newPlayer(id, d.c||COLORS[(id-1)%COLORS.length].hex, d.n); if(Game.scene) Game.spawnMeshes(S.players[id]); }
           S.players[id].name=d.n; S.players[id].color=d.c||S.players[id].color;
-          refreshLobby(true); this.sayHello();
+          refreshLobby(true);
+          if(isNew) this.sayHello();   // answer a NEW rider once (answering every hello made an endless loop that flooded the relay)
           if(window.Voice) Voice.onPlayerJoin(id);
         }
       }
@@ -575,8 +608,14 @@ var Net = {
       if(typeof d.rd==='number' && d.rd < S.round) return;   // stale round — ignore
       var o=S.players[id];
       if(!o){ o=newPlayer(id, d.c||COLORS[(id-1)%COLORS.length].hex, d.n); S.players[id]=o; if(Game.scene) Game.spawnMeshes(o); }
-      o.name=d.n; o.color=d.c||o.color; o.pts=d.pts||o.pts; o.x=d.x; o.z=d.z; o.dir=d.dir; o.alive=d.alive; o.fpvPref=!!d.fp;
-      o.fx=d.fx||o.fx; o.upgrades=d.upgrades||o.upgrades; if(d.holes) S.blastHoles=d.holes;
+      if(d.n) o.name=d.n; if(d.c) o.color=d.c; if(d.pts) o.pts=d.pts;
+      o.x=d.x; o.z=d.z; o.dir=d.dir; o.alive=d.alive;
+      if(typeof d.fp==='boolean') o.fpvPref=d.fp;
+      if(typeof d.sp==='number') o.speed=d.sp;          // real speed (nitro, slowdowns) so the bike glides right
+      if(typeof d.y==='number') o.y=d.y;                // jumps now show up
+      if(d.fx){ var nfx=blankFx(); for(var fk in d.fx) nfx[fk]=d.fx[fk]; o.fx=nfx; }
+      if(d.upgrades) o.upgrades=d.upgrades;
+      if(d.holes) mergeHoles(d.holes);
       o.ts=Date.now();
       o.buf=o.buf||[]; o.buf.push({t:o.ts, x:d.x, z:d.z}); if(o.buf.length>10) o.buf.shift();
       if(d.cons){ for(var k in d.cons) S.consumed[k]=true; }
@@ -618,15 +657,26 @@ var Net = {
 // ============================================================
 // VOICE — WebRTC push-to-talk (signaling over the MQTT room)
 // ============================================================
+// STUN finds a direct path between you. Between different home/phone networks that often fails,
+// and you need a TURN relay. Get free TURN credentials (e.g. metered.ca) and add a line like:
+//   {urls:'turn:YOUR_TURN_HOST:443?transport=tcp', username:'USER', credential:'PASS'}
+var ICE_SERVERS=[
+  {urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}
+];
+function voiceMsg(m,c){ if(S.screen==='lobby') lobbyStatus(m); else toast(m,c||'#8affc8',1800); }
 var Voice = {
-  stream:null, peers:{}, audios:{}, micReady:false, talking:false,
+  stream:null, peers:{}, audios:{}, micReady:false, talking:false, want:false,
   addLocalTracks:function(st){ if(!this.stream) return; var senders=st.pc.getSenders();
     this.stream.getTracks().forEach(function(t){ if(!senders.some(function(s){return s.track===t;})) st.pc.addTrack(t, Voice.stream); }); },
   ensurePeer:function(id){ id=+id; if(id===S.me) return null; if(this.peers[id]) return this.peers[id];
     if(typeof RTCPeerConnection==='undefined') return null;
-    var pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
-    var st={pc:pc, makingOffer:false, ignoreOffer:false, polite:(S.me>id)};
+    var pc=new RTCPeerConnection({iceServers:ICE_SERVERS});
+    var st={pc:pc, makingOffer:false, ignoreOffer:false, polite:(S.me>id), iceQ:[]};
     this.peers[id]=st;
+    pc.onconnectionstatechange=function(){
+      if(pc.connectionState==='connected') voiceMsg('\uD83C\uDFA4 Voice connected','#8affc8');
+      else if(pc.connectionState==='failed'){ voiceMsg('Voice blocked by network (needs a TURN server)','#ff6b6b'); try{ pc.restartIce(); }catch(e){} }
+    };
     pc.onicecandidate=function(e){ if(e.candidate) Voice.sig(id,{k:'ice',c:e.candidate}); };
     pc.ontrack=function(e){ Voice.play(id, e.streams[0]); };
     pc.onnegotiationneeded=function(){ (function(){ try{ st.makingOffer=true;
@@ -635,16 +685,23 @@ var Voice = {
     this.addLocalTracks(st);
     return st;
   },
-  sig:function(to,msg){ Net.pub('rtc/'+S.me, {t:'rtc', from:S.me, to:+to, msg:msg}); },
+  sig:function(to,msg){ Net.pub('rtc/'+S.me, {t:'rtc', from:S.me, to:+to, msg:msg}, false, 1); },   // qos 1 = relay confirms delivery
   onSignal:function(d){ if(!d || d.to!==S.me) return; var from=+d.from, msg=d.msg;
     var st=this.peers[from]||this.ensurePeer(from); if(!st) return; var pc=st.pc;
     if(msg.k==='sdp'){ var desc=msg.s;
       var collision = desc.type==='offer' && (st.makingOffer || pc.signalingState!=='stable');
       st.ignoreOffer = !st.polite && collision; if(st.ignoreOffer) return;
-      pc.setRemoteDescription(desc).then(function(){ if(desc.type==='offer'){ return pc.createAnswer().then(function(a){ return pc.setLocalDescription(a); }).then(function(){ Voice.sig(from,{k:'sdp',s:pc.localDescription}); }); } }).catch(function(){});
-    } else if(msg.k==='ice'){ pc.addIceCandidate(msg.c).catch(function(){}); }
+      pc.setRemoteDescription(desc).then(function(){
+        var q=st.iceQ||[]; st.iceQ=[]; q.forEach(function(c){ pc.addIceCandidate(c).catch(function(){}); });   // candidates that arrived early
+        if(desc.type==='offer'){ return pc.createAnswer().then(function(a){ return pc.setLocalDescription(a); }).then(function(){ Voice.sig(from,{k:'sdp',s:pc.localDescription}); }); } }).catch(function(){});
+    } else if(msg.k==='ice'){
+      if(pc.remoteDescription && pc.remoteDescription.type) pc.addIceCandidate(msg.c).catch(function(){});
+      else st.iceQ.push(msg.c);                                   // hold until the offer/answer lands
+    }
   },
-  play:function(id, stream){ var a=this.audios[id]; if(!a){ a=document.createElement('audio'); a.autoplay=true; a.playsInline=true; document.body.appendChild(a); this.audios[id]=a; } a.srcObject=stream; if(a.play) a.play().catch(function(){}); },
+  play:function(id, stream){ var a=this.audios[id]; if(!a){ a=document.createElement('audio'); a.autoplay=true; a.playsInline=true; document.body.appendChild(a); this.audios[id]=a; } a.srcObject=stream;
+    if(a.play) a.play().catch(function(){ voiceMsg('Tap the screen to hear voice','#ffd24a'); }); },
+  unlock:function(){ for(var id in this.audios){ var a=this.audios[id]; if(a.paused && a.play) a.play().catch(function(){}); } },
   onPlayerJoin:function(id){ if(this.micReady) this.ensurePeer(+id); },
   enableMic:function(cb){ var self=this;
     if(this.micReady){ if(cb)cb(true); return; }
@@ -652,18 +709,21 @@ var Voice = {
     navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false}).then(function(s){
       self.stream=s; self.micReady=true; s.getAudioTracks().forEach(function(t){ t.enabled=false; });
       for(var id in S.players){ if(+id!==S.me){ var st=self.ensurePeer(+id); if(st) self.addLocalTracks(st); } }
+      voiceMsg('Mic ready, hold to talk');
       if(cb)cb(true);
     }).catch(function(){ toast('Mic permission denied','#ff6b6b',1600); if(cb)cb(false); });
   },
   talk:function(on){ this.talking=on; if(this.stream) this.stream.getAudioTracks().forEach(function(t){ t.enabled=on; });
     var b=el('talkBtn'); if(b) b.classList.toggle('talking', !!on); var b2=el('talkBtnL'); if(b2) b2.classList.toggle('talking', !!on); var b3=el('tTalk'); if(b3) b3.classList.toggle('talking', !!on); },
-  press:function(){ var self=this; if(S.mode!=='online') return; if(!this.micReady){ this.enableMic(function(ok){ if(ok) self.talk(true); }); } else this.talk(true); },
-  release:function(){ this.talk(false); },
+  // only talk while the button is actually held (before, the mic could get stuck ON after the permission popup)
+  press:function(){ var self=this; if(S.mode!=='online') return; this.want=true; if(!this.micReady){ this.enableMic(function(ok){ if(ok) self.talk(self.want); }); } else this.talk(true); },
+  release:function(){ this.want=false; this.talk(false); },
   stop:function(){ for(var id in this.peers){ try{this.peers[id].pc.close();}catch(e){} } this.peers={};
     if(this.stream){ this.stream.getTracks().forEach(function(t){t.stop();}); this.stream=null; }
     this.micReady=false; for(var a in this.audios){ try{this.audios[a].remove();}catch(e){} } this.audios={}; }
 };
 window.Voice = Voice;
+document.addEventListener('pointerdown', function(){ Voice.unlock(); });
 
 function connLive(){
   var d=el('connDot'), c=el('conn');
